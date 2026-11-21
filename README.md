@@ -1,4 +1,4 @@
-# Stock Research Dashboard
+# AI Stock Research
 
 A personal stock research workspace with watchlists, manual holdings, configurable multi-agent analysis, cited filing excerpts, and visible MCP tool activity.
 
