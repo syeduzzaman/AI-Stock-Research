@@ -172,6 +172,30 @@ fieldset{margin:0;padding:0;border:0;min-width:0}
 .score-guide p{color:var(--muted);font-size:13px;line-height:1.5;margin-top:9px}
 .score-scale{list-style:none;margin:9px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
 .score-scale li,.agent-outlook{display:inline-block;color:var(--score-ink);background:var(--score-tint);border-radius:999px;padding:4px 8px;font-size:11px;font-weight:670}
+.comparison-card{padding:14px 18px}
+.comparison-card>summary{font-size:15px}
+.comparison-summary{color:var(--muted);font-size:12px;font-weight:600;display:inline-block;margin-inline-start:7px}
+.comparison-content{display:grid;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.comparison-content p,.comparison-evidence li{color:var(--muted);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.comparison-header,.comparison-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px}
+.comparison-header{justify-content:space-between}
+.comparison-dates{margin:0;color:var(--muted);font-size:12px}
+.comparison-dates dd{margin:3px 0 0;color:var(--ink);font-weight:650}
+.comparison-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.comparison-table th,.comparison-table td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:start;overflow-wrap:anywhere}
+.comparison-table thead th:first-child{width:44%}
+.comparison-table thead th{color:var(--muted);font-size:12px}
+.comparison-table tbody th{font-weight:600}
+.comparison-table tbody tr:first-child{background:var(--soft-blue);font-weight:700}
+.comparison-change{font-weight:650}
+.comparison-change[data-direction="up"]{color:var(--up)}
+.comparison-change[data-direction="down"]{color:var(--red)}
+.comparison-evidence{display:grid;gap:6px}
+.comparison-evidence h3{font-size:14px}
+.comparison-evidence h3:not(:first-child){margin-top:6px}
+.comparison-evidence ul{display:grid;gap:5px;list-style:none;margin:0;padding:0}
+.comparison-evidence li{padding:7px 10px;background:#f2f4f8;border-radius:7px}
+.comparison-evidence blockquote{margin:3px 0 0;font-size:12px}
 .agent-results{display:grid;gap:10px}
 .agent-card{
   display:grid;
@@ -239,6 +263,9 @@ details summary{color:var(--primary);font-weight:650;font-size:13px}
 @media(max-width:660px){.footer-disclosures{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){
   .header-controls{justify-content:flex-start}
+  .comparison-card{padding:12px}
+  .comparison-table{font-size:12px}
+  .comparison-table th,.comparison-table td{padding:7px 4px}
   .workspace-editor,.portfolio-overview,.position-row,.position-empty{padding:13px}
   .result-summary{padding:14px;align-items:start;gap:11px}
   .result-score{--ring-size:74px;--ring-width:5px;--ring-number:22px}

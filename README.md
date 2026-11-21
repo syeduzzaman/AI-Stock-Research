@@ -30,6 +30,8 @@ Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. Th
 
 Try searching for **MU**, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources to read the evidence. **Analysis history** saves completed runs. Use **Add to watchlist** from the stock card or result to follow its closing price and reopen the latest analysis. Use **Add holding** to enter shares you own and the average cost per share in USD. The **Portfolio** shows cost basis, market value, and unrealized gain or loss.
 
+Run an analysis again with the same settings and open **Compare with previous analysis** in the result. It compares the nearest earlier matching run in your saved history and highlights score changes, newly cited sources, and updated data snapshots.
+
 ## Connect a dedicated Supabase project
 
 1. In the new project, run [the workspace migration](supabase/migrations/202611200001_workspace.sql) in the SQL Editor.

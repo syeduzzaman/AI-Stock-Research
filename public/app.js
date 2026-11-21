@@ -1,3 +1,4 @@
+import { compareWithPrevious } from "./analysis-comparison.js";
 import { translate } from "./i18n.js";
 
 const $ = id => document.getElementById(id);
@@ -28,12 +29,13 @@ function formatters(language) {
     decimal: new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
     calendar: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", timeZone: "UTC" }),
     quoteDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }),
-    eventDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" })
+    eventDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    runDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" })
   };
 }
 
 let language = preferredLanguage();
-let { money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate } = formatters(language);
+let { money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate, runDate } = formatters(language);
 const t = (message, values) => translate(language, message, values);
 
 function dateLabel(date) {
@@ -590,7 +592,123 @@ function localizedSource(source) {
   return { text: source.text, original: true };
 }
 
+function sourceItem(source) {
+  const item = el("li");
+  const label = t(source.title) + (source.date ? " · " + dateLabel(source.date) : "");
+  if (source.url?.startsWith("https://")) {
+    const link = el("a", label);
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    item.append(link);
+  } else {
+    item.append(el("span", label));
+  }
+  const { text, original } = localizedSource(source);
+  const excerpt = el("blockquote", text);
+  if (original) {
+    excerpt.lang = "en";
+    item.append(el("small", t("Original excerpt in English"), "content-language"));
+  }
+  item.append(excerpt);
+  return item;
+}
+
+function scoreChange(previous, current) {
+  const value = el("span", undefined, "comparison-change");
+  if (!Number.isFinite(previous) || !Number.isFinite(current)) {
+    value.textContent = t(Number.isFinite(current) ? "Now scored" : Number.isFinite(previous) ? "Now unscored" : "Unscored");
+    return value;
+  }
+  const change = current - previous;
+  if (change === 0) {
+    value.textContent = t("No change");
+  } else {
+    const delta = change > 0 ? "+" + change : "−" + Math.abs(change);
+    value.textContent = t(Math.abs(change) === 1 ? "{delta} point" : "{delta} points", { delta });
+    value.dataset.direction = change > 0 ? "up" : "down";
+  }
+  return value;
+}
+
+function scoreComparisonRow(label, previous, current) {
+  const row = el("tr");
+  const title = el("th", label);
+  title.scope = "row";
+  const showScore = score => Number.isFinite(score) ? score + "/100" : t("Unscored");
+  const change = el("td");
+  change.append(scoreChange(previous, current));
+  row.append(title, el("td", showScore(previous)), el("td", showScore(current)), change);
+  return row;
+}
+
+function renderComparison(result) {
+  const content = $("comparison-content");
+  const summary = $("comparison-summary");
+  const comparison = compareWithPrevious(result, history);
+  if (!comparison) {
+    summary.textContent = t("No matching earlier run");
+    content.replaceChildren(el("p", t("Run another analysis for this stock with the same settings to compare results.")));
+    return;
+  }
+  const { previous, agents, addedSources, updatedSources } = comparison;
+  summary.replaceChildren(scoreChange(previous.score, result.score));
+
+  const dates = el("dl", undefined, "comparison-dates");
+  for (const [label, run] of [["Earlier run", previous], ["Current run", result]]) {
+    const entry = el("div");
+    const date = el("time", runDate.format(new Date(run.createdAt)));
+    date.dateTime = run.createdAt;
+    const value = el("dd");
+    value.append(date);
+    entry.append(el("dt", t(label)), value);
+    dates.append(entry);
+  }
+  const openEarlier = el("button", t("Open earlier result"), "secondary");
+  openEarlier.type = "button";
+  openEarlier.addEventListener("click", () => {
+    openAnalysis(previous);
+    $("analysis-comparison").querySelector("summary").focus({ preventScroll: true });
+  });
+  const header = el("div", undefined, "comparison-header");
+  header.append(dates, openEarlier);
+
+  const table = el("table", undefined, "comparison-table");
+  table.setAttribute("aria-label", t("Analysis score comparison"));
+  const headings = table.createTHead().insertRow();
+  for (const title of ["Score", "Earlier", "Current", "Change"]) {
+    const heading = el("th", t(title));
+    heading.scope = "col";
+    headings.append(heading);
+  }
+  table.createTBody().append(
+    scoreComparisonRow(t("Overall"), previous.score, result.score),
+    ...agents.map((agent, index) => scoreComparisonRow(agentTitle(agent.current, index), agent.previous.score, agent.current.score))
+  );
+  content.replaceChildren(header, table);
+  if (agents.some(({ previous, current }) => Number.isFinite(previous.score) !== Number.isFinite(current.score))) {
+    content.append(el("p", t("Different agents contributed scores to the two totals.")));
+  }
+
+  const evidence = el("div", undefined, "comparison-evidence");
+  for (const [title, sources, emptyMessage] of [
+    ["Newly cited sources", addedSources, "All cited sources already appeared in the earlier run."],
+    ["Updated data snapshots", updatedSources, "Shared data snapshots are unchanged."]
+  ]) {
+    evidence.append(el("h3", t(title)));
+    if (sources.length) {
+      const list = el("ul");
+      list.append(...sources.map(sourceItem));
+      evidence.append(list);
+    } else {
+      evidence.append(el("p", t(emptyMessage)));
+    }
+  }
+  content.append(evidence);
+}
+
 function renderResult(result) {
+  if (displayedResult?.id !== result.id) $("analysis-comparison").open = false;
   displayedResult = result;
   $("result-panel").hidden = false;
   $("result-title").textContent = t("{ticker} · {range} outlook", { ticker: result.ticker, range: t(ranges[result.horizon]) });
@@ -606,6 +724,7 @@ function renderResult(result) {
   $("result-outlook").textContent = t(outlook.label);
   $("result-explanation").textContent = explainOutlook(result, outlook);
   $("result-score").replaceChildren(scoreRing(result.score, outlook));
+  renderComparison(result);
   $("agent-results").replaceChildren(...result.agents.map((agent, index) => {
     const card = el("article", undefined, "card agent-card");
     const agentOutlook = scoreOutlook(agent.score);
@@ -624,27 +743,7 @@ function renderResult(result) {
       const info = el("details");
       info.append(el("summary", agent.sources.length === 1 ? t("Source") : t("{count} sources", { count: agent.sources.length })));
       const list = el("ul");
-      for (const source of agent.sources) {
-        const item = el("li");
-        const label = t(source.title) + (source.date ? " · " + dateLabel(source.date) : "");
-        if (source.url?.startsWith("https://")) {
-          const link = el("a", label);
-          link.href = source.url;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          item.append(link);
-        } else {
-          item.append(el("span", label));
-        }
-        const { text, original } = localizedSource(source);
-        const excerpt = el("blockquote", text);
-        if (original) {
-          excerpt.lang = "en";
-          item.append(el("small", t("Original excerpt in English"), "content-language"));
-        }
-        item.append(excerpt);
-        list.append(item);
-      }
+      list.append(...agent.sources.map(sourceItem));
       info.append(list);
       evidence.append(info);
     }
@@ -1078,7 +1177,7 @@ function providerOptionLabel(provider) {
 
 function applyLanguage(next) {
   language = next;
-  ({ money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate } = formatters(language));
+  ({ money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate, runDate } = formatters(language));
   document.documentElement.lang = language;
   for (const [node, message] of staticCopy) node.textContent = t(message);
   for (const [node, attr, message] of staticAttributes) node.setAttribute(attr, t(message));
