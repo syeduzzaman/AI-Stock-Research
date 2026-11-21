@@ -219,7 +219,7 @@ const german = {
   "Check your email for the verification code.": "Prüfen Sie Ihr E-Mail-Postfach auf den Bestätigungscode.",
   "Check your email for the confirmation link.": "Prüfen Sie Ihr E-Mail-Postfach auf den Bestätigungslink.",
   "Account request failed.": "Die Kontoanfrage ist fehlgeschlagen.",
-  "Invalid login credentials": "E-Mail-Adresse oder Passwort ist ungültig.",
+  "The email address or password is incorrect.": "Die E-Mail-Adresse oder das Passwort ist falsch.",
   "Token has expired or is invalid": "Der Bestätigungscode ist abgelaufen oder ungültig.",
   "User already registered": "Für diese E-Mail-Adresse besteht bereits ein Konto.",
   "Email rate limit exceeded": "Es wurden zu viele E-Mails angefordert. Versuchen Sie es später erneut.",

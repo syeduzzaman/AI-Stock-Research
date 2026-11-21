@@ -40,10 +40,11 @@ async function supabase(path, { method = "GET", token, payload, prefer, redirect
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const authError = path.startsWith("/auth/");
-    const message = authError
-      ? (data?.msg ?? data?.error_description ?? data?.message ?? "Account request failed.")
-      : "The workspace database could not complete the request.";
     const code = authError ? (response.headers.get("x-sb-error-code") ?? data?.error_code ?? data?.code) : undefined;
+    const message = authError
+      ? (code === "invalid_credentials" ? "The email address or password is incorrect."
+        : data?.msg ?? data?.error_description ?? data?.message ?? "Account request failed.")
+      : "The workspace database could not complete the request.";
     throw new HttpError(response.status, message, code);
   }
   return data;

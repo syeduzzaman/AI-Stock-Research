@@ -129,6 +129,7 @@ fieldset{margin:0;padding:0;border:0;min-width:0}
 .notice{background:var(--soft-blue);border:1px solid #ccd8ed;color:var(--primary);padding:10px 14px;margin:0 0 14px;border-radius:8px;font-size:14px}
 .notice.error{background:#fbeff1;border-color:#efd7dd;color:#922235}
 .sign-in{max-width:440px}
+.sign-in .notice{margin:12px 0 0}
 .sign-in .primary{margin-top:14px}
 .sign-in .text-button{font-size:13px;margin-left:12px}
 .results{margin-top:24px;display:grid;gap:12px}

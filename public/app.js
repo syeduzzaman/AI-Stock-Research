@@ -77,19 +77,27 @@ async function api(path, method = "GET", body) {
   return data;
 }
 
-function notice(message, isError = false, values) {
-  lastNotice = { message, isError, values };
+function notice(message, isError = false, values, target = "notice") {
+  lastNotice = { message, isError, values, target };
   renderNotice();
 }
 
+function accountNotice(message, isError = false) {
+  notice(message, isError, undefined, $("account-panel").hidden ? "notice" : "auth-notice");
+}
+
 function renderNotice() {
-  const { message, isError, values } = lastNotice ?? {};
-  const box = $("notice");
-  box.hidden = !message;
+  const { message, isError, values, target } = lastNotice ?? {};
   const copy = message ? t(message, values) : "";
-  box.textContent = language === "de" && isError && copy === message
+  const display = language === "de" && isError && copy === message
     ? t("The request could not be completed.") : copy;
-  box.classList.toggle("error", Boolean(isError));
+  for (const id of ["notice", "auth-notice"]) {
+    const box = $(id);
+    const visible = id === target && Boolean(message);
+    box.hidden = !visible;
+    box.textContent = visible ? display : "";
+    box.classList.toggle("error", visible && isError);
+  }
 }
 
 function settings() {
@@ -275,10 +283,12 @@ function authControls() {
   $("code-field").hidden = !enterCode;
   $("auth-switch").hidden = !hosted || followLink;
   $("resend-confirmation").hidden = !verify;
-  $("username").required = signup;
-  $("email").required = hosted;
-  $("password").required = hosted && !verify;
-  $("email-code").required = enterCode;
+  const activeFields = { username: signup, email: hosted, password: hosted && !verify, "email-code": enterCode };
+  for (const [id, active] of Object.entries(activeFields)) {
+    $(id).disabled = !active;
+    $(id).required = active;
+  }
+  $("email").autocomplete = login ? "username" : "email";
   $("password").autocomplete = signup ? "new-password" : "current-password";
   $("sign-in").textContent = t(signup ? "Create account" : enterCode ? "Verify code" : followLink ? "Back to sign in" : login ? "Sign in" : "Open demo");
   $("sign-in").formNoValidate = followLink;
@@ -951,10 +961,10 @@ async function submitAccount(action) {
       authAction = "verify";
       authControls();
       if (config.confirmationMode === "code") $("email-code").focus();
-      if (action === "resend") notice(result.message);
+      if (action === "resend") accountNotice(result.message);
     }
   } catch (error) {
-    notice(error.message, true);
+    accountNotice(error.message, true);
   } finally {
     for (const button of buttons) button.disabled = false;
   }
@@ -1136,9 +1146,9 @@ try {
     $("provider").append(option);
   }
   await showAccount((await api("/api/session")).user);
-  if (config.hosted && !user && emailConfirmed) notice("Email confirmed. Sign in to open your workspace.");
+  if (config.hosted && !user && emailConfirmed) accountNotice("Email confirmed. Sign in to open your workspace.");
   if (config.hosted && !user && confirmationExpired) {
-    notice("This confirmation link is invalid or has expired. Sign in to continue or request a new link.", true);
+    accountNotice("This confirmation link is invalid or has expired. Sign in to continue or request a new link.", true);
   }
 } catch (error) {
   notice(error.message, true);

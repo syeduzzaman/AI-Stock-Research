@@ -56,7 +56,9 @@ test("hosted signup stores the username and issues a session after verification"
   const signup = await accounts.signIn("signup", { email, password, username }, confirmationUrl);
   assert.equal(signup.session, null);
   assert.equal(signup.verificationRequired, true);
-  await assert.rejects(accounts.signIn("login", { email, password: "incorrect-password" }), { status: 400 });
+  await assert.rejects(accounts.signIn("login", { email, password: "incorrect-password" }), {
+    status: 400, code: "invalid_credentials", message: "The email address or password is incorrect."
+  });
   const pending = await accounts.signIn("login", { email, password });
   assert.equal(pending.session, null);
   assert.equal(pending.verificationRequired, true);
