@@ -1,0 +1,20 @@
+services:
+  dashboard:
+    build: .
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "${DASHBOARD_PORT:-8082}"
+      LOCAL_CONTAINER_ORIGIN: "http://127.0.0.1:${DASHBOARD_PORT:-8082}"
+      PUBLIC_ORIGIN: ""
+      WORKSPACE_DB: /app/data/workspace.sqlite
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8082}:${DASHBOARD_PORT:-8082}"
+    volumes:
+      - workspace-data:/app/data
+
+volumes:
+  workspace-data:
