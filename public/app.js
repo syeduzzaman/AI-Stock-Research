@@ -62,6 +62,8 @@ let watchPending = false;
 let watchUpdates;
 let holdingPending = false;
 const closingQuotes = new Map();
+const newsByStock = new Map();
+let newsInView = false;
 
 function el(tag, text, className) {
   const item = document.createElement(tag);
@@ -302,6 +304,8 @@ async function showAccount(account) {
   const version = ++signedInVersion;
   marketRequest += 1;
   closingQuotes.clear();
+  newsByStock.clear();
+  $("company-news").hidden = true;
   watchPending = false;
   watchUpdates = null;
   holdingPending = false;
@@ -376,7 +380,81 @@ async function chooseStock(ticker, keepResult = false) {
   $("stock-logo").textContent = stock.ticker.slice(0, 1);
   renderStockSector();
   updateStockActions();
+  renderCompanyNews();
+  if (newsInView) void loadCompanyNews();
   await loadMarket();
+}
+
+function companyNewsItem(item, demo) {
+  const release = item.kind === "release";
+  const headline = el("h3", release ? (demo ? t(item.title) : item.title) : t("SEC Form {form}", { form: item.form }));
+  const source = t(demo ? (release ? "Demo press release" : "Demo filing") : (release ? "Company press release · Twelve Data" : "SEC EDGAR"));
+  const meta = el("p", undefined, "company-news-meta");
+  const time = el("time", dateLabel(item.publishedAt));
+  time.dateTime = item.publishedAt;
+  meta.append(source, " · ", time);
+  const details = el("div");
+  details.append(meta, headline);
+  if (item.excerpt) {
+    details.append(el("p", demo ? t(item.excerpt) : item.excerpt, "company-news-excerpt"));
+  }
+  if (release && !demo) {
+    headline.lang = "en";
+    if (item.excerpt) details.lastElementChild.lang = "en";
+  }
+  const row = el("li", undefined, "company-news-item");
+  row.append(details);
+  if (item.url?.startsWith("https://www.sec.gov/Archives/edgar/data/")) {
+    const link = el("a", t("Open SEC filing"), "secondary");
+    link.href = item.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    row.append(link);
+  }
+  return row;
+}
+
+function renderCompanyNews() {
+  if (!stock) return;
+  $("company-news").hidden = false;
+  $("company-news-title").textContent = t("Latest news for {ticker}", { ticker: stock.ticker });
+  const { data, loading, failed } = newsByStock.get(stock.ticker) ?? {};
+  const messages = [];
+  const list = $("company-news-items");
+  list.setAttribute("aria-busy", String(Boolean(loading)));
+  list.replaceChildren(...(data?.items ?? []).map(item => companyNewsItem(item, data.marketMode === "demo")));
+  if (loading) messages.push(t("Loading company news…"));
+  if (failed) messages.push(t("Company news could not be loaded. Try again."));
+  if (data) {
+    if (data.unavailable.releases) messages.push(t("Company press releases are temporarily unavailable."));
+    if (data.unavailable.filings) messages.push(t("SEC filings are temporarily unavailable."));
+    if (!data.items.length && !data.unavailable.releases && !data.unavailable.filings) {
+      messages.push(t("No company press releases or SEC filings in the past {days} days.", { days: data.days }));
+    }
+  }
+  const status = $("company-news-status");
+  status.textContent = messages.join(" ");
+  status.hidden = !messages.length;
+  $("company-news-retry").hidden = Boolean(loading) || !(failed || data?.unavailable.releases || data?.unavailable.filings);
+}
+
+async function loadCompanyNews(force = false) {
+  if (!stock || !user || $("research").hidden || $("workspace").hidden) return;
+  const ticker = stock.ticker;
+  const cached = newsByStock.get(ticker);
+  if (cached?.loading || (!force && cached?.expires > Date.now())) return;
+  const request = { loading: true, data: cached?.data };
+  newsByStock.set(ticker, request);
+  renderCompanyNews();
+  try {
+    request.data = await api("/api/company-news?" + new URLSearchParams({ ticker }));
+  } catch {
+    request.failed = true;
+  } finally {
+    request.loading = false;
+    request.expires = Date.now() + 300_000;
+    if (newsByStock.get(ticker) === request && stock?.ticker === ticker) renderCompanyNews();
+  }
 }
 
 function renderStockSector() {
@@ -1252,6 +1330,11 @@ $("analysis-form").addEventListener("submit", async event => {
   }
 });
 new ResizeObserver(drawChart).observe($("chart").parentElement);
+new IntersectionObserver(([entry]) => {
+  newsInView = entry.isIntersecting;
+  if (newsInView) void loadCompanyNews();
+}, { rootMargin: "180px" }).observe($("company-news"));
+$("company-news-retry").addEventListener("click", () => { void loadCompanyNews(true); });
 
 function renderScoreScale() {
   $("score-scale").replaceChildren(...outlookBands.map((band, index) => {
@@ -1305,6 +1388,7 @@ function applyLanguage(next) {
     renderStockSector();
     renderMarketQuote();
     updateStockActions();
+    renderCompanyNews();
   }
   if (!$("search-results").hidden) renderSearch();
   if (displayedResult) {

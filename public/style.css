@@ -83,6 +83,19 @@ button.market-tile:hover{background:#f8faff;border-color:#a1b3d4}
 .market-sparkline{height:38px;min-width:0;width:100%}
 .research-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(265px,.8fr);gap:18px;align-items:start}
 .stock-card,.setup,.sign-in,.table-card{padding:22px}
+.company-news{margin-top:18px;padding:18px 20px}
+.company-news-header{display:flex;align-items:start;justify-content:space-between;flex-wrap:wrap;gap:8px 16px}
+.company-news-header h2{font-size:17px}
+.company-news-header p,.company-news-meta,.company-news-status{color:var(--muted);font-size:12px;line-height:1.45}
+.company-news-header p{margin-top:4px}
+.company-news-status:not(:empty){margin-top:10px}
+.company-news-items{list-style:none;margin:12px 0 0;padding:0}
+.company-news-items:empty{margin:0}
+.company-news-item{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:7px 18px;padding:11px 0;border-top:1px solid var(--line)}
+.company-news-item:last-child{padding-bottom:0}
+.company-news-item h3{font-size:14px;margin-top:3px;overflow-wrap:anywhere}
+.company-news-item a{text-decoration:none}
+.company-news-excerpt{color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;max-width:95ch;overflow-wrap:anywhere}
 .stock-search{position:relative;display:flex;gap:8px;padding-bottom:20px;border-bottom:1px solid var(--line)}
 .stock-search select{width:auto;max-width:45%}
 .search-label{display:flex;align-items:center;gap:7px;flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;color:var(--muted);padding-left:8px}
@@ -277,6 +290,7 @@ details summary{color:var(--primary);font-weight:650;font-size:13px}
 @media(max-width:660px){.footer-disclosures{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){
   .header-controls{justify-content:flex-start}
+  .company-news{padding:13px}
   .comparison-card{padding:12px}
   .comparison-table{font-size:12px}
   .comparison-table th,.comparison-table td{padding:7px 4px}

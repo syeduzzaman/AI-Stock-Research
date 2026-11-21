@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { analyze, horizons, listProviders, marketSnapshot, roles } from "./analysis.mjs";
 import { confirmationMode, createAccounts, hosted, HttpError, readSession, sessionCookie } from "./accounts.mjs";
+import { companyNews } from "./company-news.mjs";
 import { connectMcp } from "./mcp-client.mjs";
 import { findStock, mode, publicStock, stocks } from "./market.mjs";
 import { watchlistUpdates } from "./watchlist-updates.mjs";
@@ -195,6 +196,14 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
         if (!findStock(ticker) || !Object.hasOwn(horizons, horizon)) throw new HttpError(400, "Choose a supported stock and time horizon.");
         accounts.rateLimit("market:" + user.id, 120, 60_000);
         json(response, 200, await marketSnapshot(mcp, ticker, horizon));
+        return;
+      }
+      if (method === "GET" && path === "/api/company-news") {
+        verifyOrigin(request);
+        const ticker = url.searchParams.get("ticker");
+        if (!findStock(ticker)) throw new HttpError(400, "Choose a supported stock.");
+        accounts.rateLimit("company-news:" + user.id, 12, 60_000);
+        json(response, 200, await companyNews(mcp, ticker));
         return;
       }
       if (method === "POST" && path === "/api/analysis") {

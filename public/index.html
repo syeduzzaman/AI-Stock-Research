@@ -135,6 +135,17 @@
             </details>
             <div id="agent-results" class="agent-results"></div>
           </section>
+          <section class="card company-news" id="company-news" aria-labelledby="company-news-title" hidden>
+            <div class="company-news-header">
+              <div>
+                <h2 id="company-news-title"></h2>
+                <p data-i18n>Recent company press releases and SEC filings.</p>
+              </div>
+              <button class="secondary" id="company-news-retry" type="button" data-i18n hidden>Retry news</button>
+            </div>
+            <p class="company-news-status" id="company-news-status" role="status" hidden></p>
+            <ul class="company-news-items" id="company-news-items" aria-labelledby="company-news-title"></ul>
+          </section>
         </section>
         <section id="watchlist" class="view workspace-list" aria-labelledby="view-title" hidden>
           <article class="card workspace-editor">

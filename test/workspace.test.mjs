@@ -49,6 +49,7 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.deepEqual(health.result, { status: "ok" });
     assert.equal((await request("/", { host: "elsewhere.example" })).status, 403);
     assert.equal((await request("/api/workspace")).status, 401);
+    assert.equal((await request("/api/company-news?ticker=MU")).status, 401);
     assert.equal((await request("/api/watchlist/updates")).status, 401);
     assert.equal((await request("/api/market-overview", { origin: "https://elsewhere.example" })).status, 403);
     const highlights = await request("/api/market-overview");
@@ -68,6 +69,11 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.equal(configured.marketMode, "demo");
     assert.equal(configured.stocks.length, 12);
     assert.equal(configured.providers.find(item => item.id === "gemini").enabled, false);
+    const news = await call("/api/company-news?ticker=MU");
+    assert.equal(news.status, 200);
+    assert.deepEqual(news.result.items.map(item => item.kind), ["release", "filing"]);
+    assert.equal(news.result.marketMode, "demo");
+    assert.equal((await call("/api/company-news?ticker=invalid")).status, 400);
     assert.deepEqual((await call("/api/watchlist", "PUT", { ticker: "MU", add: true })).result.watchlist, ["MU"]);
     assert.equal((await call("/api/watchlist", "PUT", { ticker: "invalid", add: true })).status, 400);
     assert.equal((await request("/api/watchlist/updates", { cookie, origin: "https://elsewhere.example" })).status, 403);

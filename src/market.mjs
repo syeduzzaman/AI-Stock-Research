@@ -165,6 +165,40 @@ export async function recentFilings(stock) {
   return (await companyReports(stock)).map(({ form, date, url }) => ({ form, date, url }));
 }
 
+export async function pressReleases(stock) {
+  if (mode === "demo") {
+    return [{
+      title: "Sample company announcement", publishedAt: fixtureDate + "T14:00:00Z",
+      excerpt: "This fictional release illustrates how a company announcement appears in the research view."
+    }];
+  }
+  if (!process.env.TWELVE_DATA_API_KEY) throw new Error("Configure the market data API key for live press releases.");
+  return cachedFetch("press-releases:" + stock.ticker, 900_000, async () => {
+    const url = new URL("https://api.twelvedata.com/press_releases");
+    url.search = new URLSearchParams({ symbol: stock.ticker, outputsize: "6", language: "en,en-US", timezone: "UTC" });
+    const response = await fetch(url, {
+      headers: { Authorization: "apikey " + process.env.TWELVE_DATA_API_KEY },
+      signal: AbortSignal.timeout(12_000)
+    });
+    if (!response.ok) throw new Error("The press release provider is temporarily unavailable.");
+    const data = await response.json();
+    if (data.status === "ok" && data.press_releases === null) return [];
+    if (data.status === "error" || !Array.isArray(data.press_releases)) throw new Error("The press release provider returned an unexpected response.");
+    const headlines = [];
+    for (const release of data.press_releases) {
+      const { title, datetime, body } = release ?? {};
+      if (typeof title !== "string" || !title.trim() || typeof datetime !== "string") continue;
+      const iso = datetime.replace(" ", "T");
+      const time = Date.parse(/[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + "Z");
+      if (!Number.isFinite(time)) continue;
+      const text = typeof body === "string" ? (segments(body.slice(0, 16_000))[0] ?? "") : "";
+      const excerpt = text.length > 240 ? text.slice(0, 241).replace(/\s+\S*$/, "").slice(0, 240) + "…" : text;
+      headlines.push({ title: title.trim().slice(0, 300), publishedAt: new Date(time).toISOString(), excerpt });
+    }
+    return headlines;
+  });
+}
+
 async function filingPassages(stock) {
   if (mode === "demo") return fixturePassages(stock);
   const cik = String(stock.cik).padStart(10, "0");
