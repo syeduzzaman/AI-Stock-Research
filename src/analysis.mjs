@@ -142,23 +142,11 @@ export async function analyze(mcp, stock, { horizon, agentCount, providerId }) {
   if (!Object.hasOwn(horizons, horizon) || ![3, 5].includes(agentCount)
     || (providerId !== "demo" && !provider)) throw new Error("Invalid analysis options.");
   const chosen = roles.slice(0, agentCount);
-  const trace = [];
-  async function call(role, tool, args) {
-    const start = Date.now();
-    try {
-      const data = await mcp.call(tool, { ticker: stock.ticker, ...args });
-      trace.push({ role, tool, status: "ok", ms: Date.now() - start });
-      return data;
-    } catch (error) {
-      trace.push({ role, tool, status: "error", ms: Date.now() - start });
-      throw error;
-    }
-  }
   const results = await Promise.all(chosen.map(async role => {
     const { id, name, initials } = role;
     const base = { id, name, initials };
     try {
-      const data = await call(name, role.tool, role.query ? { query: role.query } : {});
+      const data = await mcp.call(role.tool, { ticker: stock.ticker, ...(role.query ? { query: role.query } : {}) });
       const metrics = data.prices ? windowMetrics(data.prices, horizon) : null;
       const sources = data.excerpts ?? [{
         id: role.id + "-data", title: data.mode === "demo" ? "Synthetic data" : (metrics ? "Twelve Data · Daily closes" : "SEC EDGAR · Company facts"),
@@ -187,6 +175,6 @@ export async function analyze(mcp, stock, { horizon, agentCount, providerId }) {
     id: randomUUID(), ticker: stock.ticker, horizon, provider: providerId, model: provider?.model ?? null,
     agentCount, score: scores.length ? Math.round(scores.reduce((sum, n) => sum + n, 0) / scores.length) : null,
     scoredAgents: scores.length, min: scores.length ? Math.min(...scores) : null, max: scores.length ? Math.max(...scores) : null,
-    agents: results, trace, marketMode: mode, createdAt: new Date().toISOString(), scoringVersion: "0.1"
+    agents: results, marketMode: mode, createdAt: new Date().toISOString(), scoringVersion: "0.1"
   };
 }

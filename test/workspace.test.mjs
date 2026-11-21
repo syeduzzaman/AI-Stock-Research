@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { test } from "node:test";
-import { createAccounts } from "../src/accounts.mjs";
+import { createAccounts, readSession } from "../src/accounts.mjs";
 import { rankPassages } from "../src/market.mjs";
+import { connectMcp } from "../src/mcp-client.mjs";
 import { createDashboard } from "../src/server.mjs";
 
 test("filing retrieval ranks matching sources and excludes unrelated passages", () => {
@@ -15,8 +16,11 @@ test("filing retrieval ranks matching sources and excludes unrelated passages", 
   assert.deepEqual(rankPassages(snippets, "unmatched"), []);
 });
 
-test("local workspace stores personal data, isolates accounts, and completes MCP-backed analyses", async () => {
-  const dashboard = createDashboard({ accounts: createAccounts(":memory:"), localHost: "127.0.0.1:8082" });
+test("local workspace stores personal data, isolates accounts, and completes MCP-backed analyses", async t => {
+  const accounts = createAccounts(":memory:");
+  const mcp = connectMcp();
+  const toolCalls = t.mock.method(mcp, "call");
+  const dashboard = createDashboard({ accounts, mcp, localHost: "127.0.0.1:8082" });
   try {
     async function request(path, { method = "GET", cookie, body, origin, host = "127.0.0.1:8082" } = {}) {
       const req = Object.assign(Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]), {
@@ -39,7 +43,7 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
       return { status: response.status, result, cookie: headers["set-cookie"] };
     }
 
-    assert.match((await request("/")).result, /Stock Research Dashboard/);
+    assert.match((await request("/")).result, /<title>AI Stock Research<\/title>/);
     const health = await request("/healthz");
     assert.equal(health.status, 200);
     assert.deepEqual(health.result, { status: "ok" });
@@ -74,6 +78,7 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.equal(quote.metrics.sessions, 63);
     assert.equal(quote.prices.length, 140);
 
+    toolCalls.mock.resetCalls();
     const analyzed = await call("/api/analysis", "POST", { ticker: "MU", provider: "demo", horizon: "3m", agentCount: 5 });
     assert.equal(analyzed.status, 201);
     const { result } = analyzed.result;
@@ -82,10 +87,15 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.equal(result.scoredAgents, 5);
     assert.equal(result.score, Math.round(result.agents.reduce((sum, agent) => sum + agent.score, 0) / 5));
     assert.ok(result.agents.every(agent => agent.sources.length > 0));
-    assert.deepEqual([...new Set(result.trace.map(x => x.tool))].sort(), ["get_company_financials", "get_price_history", "search_filings"]);
+    assert.deepEqual([...new Set(toolCalls.mock.calls.map(call => call.arguments[0]))].sort(),
+      ["get_company_financials", "get_price_history", "search_filings"]);
+    assert.equal(Object.hasOwn(result, "trace"), false);
+    const legacyResult = { ...result, id: "2ede0a8a-1d69-40aa-acc9-773b7ad1baee", createdAt: "2025-01-01T00:00:00Z" };
+    const account = await accounts.account(readSession({ headers: { cookie } }));
+    await accounts.saveRun(account, { ...legacyResult, trace: [{ tool: "get_price_history" }] });
     const saved = (await call("/api/workspace")).result;
     assert.deepEqual(saved.preferences, { provider: "demo", horizon: "3m", agentCount: 3 });
-    assert.deepEqual(saved.history, [result]);
+    assert.deepEqual(saved.history, [result, legacyResult]);
     const isolated = (await request("/api/workspace", { cookie: second })).result;
     assert.deepEqual([isolated.watchlist, isolated.portfolio, isolated.history], [[], [], []]);
     assert.deepEqual((await call("/api/holdings", "PUT", { ticker: "MU", shares: 0 })).result.portfolio, []);

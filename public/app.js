@@ -64,14 +64,28 @@ function selectSettings(input) {
   showAgentPreview();
 }
 
+function agentTitle(agent, index) {
+  return "Agent " + (index + 1) + " · " + agent.name;
+}
+
 function showAgentPreview() {
   const selected = config.agents.slice(0, settings().agentCount);
-  $("agent-preview").replaceChildren(...selected.map(agent => el("li", agent.name)));
-  $("run-button").disabled = !$("provider").value;
+  $("agent-preview").replaceChildren(...selected.map((agent, index) => el("li", agentTitle(agent, index))));
+  updateAnalysisControls();
+}
+
+function updateAnalysisControls() {
+  const provider = $("provider").value;
+  const demo = provider === "demo";
+  const button = $("run-button");
+  const running = button.hasAttribute("aria-busy");
+  $("analysis-title").textContent = demo ? "Demo stock analysis" : "AI stock analysis";
+  $("run-label").textContent = running ? "Running analysis…" : demo ? "Run demo analysis" : "Run AI analysis";
+  button.disabled = running || !provider;
 }
 
 const viewTitles = {
-  research: ["Stock research", "Run independent analyses and follow the evidence behind each score."],
+  research: ["AI Stock Research", "Run independent analyses and follow the evidence behind each score."],
   watchlist: ["Watchlist", "Open the stocks you’ve saved for research."],
   portfolio: ["Portfolio", "Track your shares, cost basis, and value at the latest available close."],
   history: ["Analysis history", "Reopen scores, explanations, and the evidence from previous runs."]
@@ -196,7 +210,7 @@ function authControls() {
   const followLink = verify && !enterCode;
   $("account-title").textContent = signup ? "Create your account" : verify ? "Check your email" : login ? "Sign in" : "Open the demo workspace";
   $("account-intro").textContent = enterCode ? "Enter the verification code from your email."
-    : followLink ? "Open the email from Supabase Auth and select Confirm your email. Then sign in to Stock Research."
+    : followLink ? "Open the email from Supabase Auth and select Confirm your email. Then sign in to AI Stock Research."
     : hosted ? "Your watchlist, holdings, and analyses are saved to your account."
       : marketMode === "demo" ? "Try the research flow with synthetic prices and sample filing excerpts." : "Open a local workspace to research your stocks.";
   $("auth-fields").hidden = !hosted;
@@ -228,7 +242,6 @@ async function showAccount(account) {
     holdings = [];
     history = [];
     $("agent-results").replaceChildren();
-    $("trace-list").replaceChildren();
     $("history-items").replaceChildren();
     $("watch-items").replaceChildren();
     $("holding-items").replaceChildren();
@@ -367,18 +380,72 @@ function drawChart() {
 
 const providerLabel = id => config.providers.find(item => item.id === id)?.label ?? id;
 
+const outlookBands = [
+  { min: 80, tone: "strong-upside", label: "Strong upside signal", agentLabel: "Strongly favorable",
+    description: "The scored evidence strongly favors an increase over this time horizon." },
+  { min: 65, tone: "upside", label: "Upside lean", agentLabel: "Favorable",
+    description: "The scored evidence leans toward an increase over this time horizon." },
+  { min: 45, tone: "mixed", label: "Mixed outlook", agentLabel: "Mixed evidence",
+    description: "The combined evidence gives no clear direction over this time horizon." },
+  { min: 30, tone: "downside", label: "Downside lean", agentLabel: "Unfavorable",
+    description: "The scored evidence leans toward a decline over this time horizon." },
+  { min: 0, tone: "strong-downside", label: "Strong downside signal", agentLabel: "Strongly unfavorable",
+    description: "The scored evidence strongly favors a decline over this time horizon." }
+];
+const unscored = { tone: "unscored", label: "Unscored", agentLabel: "Unscored",
+  description: "None of the agents produced a usable score. Check their explanations below." };
+
+function scoreOutlook(score) {
+  if (!Number.isFinite(score)) return unscored;
+  return outlookBands.find(band => score >= band.min) ?? unscored;
+}
+
+function scoreRing(score, outlook) {
+  const ring = el("div", undefined, "score-ring");
+  const hasScore = outlook !== unscored;
+  ring.dataset.outlook = outlook.tone;
+  ring.setAttribute("role", "img");
+  ring.setAttribute("aria-label", hasScore ? score + " out of 100" : "Unscored");
+  if (hasScore) ring.style.setProperty("--score-progress", score / 100 + "turn");
+  const value = el("div", undefined, "score-ring-value");
+  value.setAttribute("aria-hidden", "true");
+  value.append(el("strong", hasScore ? String(score) : "—"));
+  if (hasScore) value.append(el("span", "/ 100"));
+  ring.append(value);
+  return ring;
+}
+
+function explainOutlook(result, outlook) {
+  const scored = result.agents.filter(agent => Number.isFinite(agent.score)).sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const worst = scored.at(-1);
+  if (best?.score >= 65 && worst?.score < 45) {
+    return outlook.description + " Agents disagreed. " + best.name + " was favorable (" + best.score
+      + "/100) and " + worst.name + " was unfavorable (" + worst.score + "/100).";
+  }
+  return outlook.description;
+}
+
 function renderResult(result) {
   $("result-panel").hidden = false;
   $("result-title").textContent = result.ticker + " · " + ranges[result.horizon] + " outlook";
-  const range = result.min == null ? "No scored agents" : "Score range " + result.min + "–" + result.max;
+  const range = result.min == null ? "" : " · Score range " + result.min + "–" + result.max;
   const demo = result.marketMode === "demo" ? " · Synthetic evidence" : "";
-  $("result-meta").textContent = providerLabel(result.provider) + " · " + result.scoredAgents + "/" + result.agentCount + " scored · " + range + demo;
-  $("result-score").textContent = result.score == null ? "—" : String(result.score) + "/100";
-  $("agent-results").replaceChildren(...result.agents.map(agent => {
+  $("result-meta").textContent = providerLabel(result.provider) + " · " + result.scoredAgents + " of " + result.agentCount + " agents scored" + range + demo;
+  const outlook = scoreOutlook(result.score);
+  $("result-summary").dataset.outlook = outlook.tone;
+  $("result-outlook").textContent = outlook.label;
+  $("result-explanation").textContent = explainOutlook(result, outlook);
+  $("result-score").replaceChildren(scoreRing(result.score, outlook));
+  $("agent-results").replaceChildren(...result.agents.map((agent, index) => {
     const card = el("article", undefined, "card agent-card");
-    const top = el("header");
-    top.append(el("h3", agent.name), el("strong", agent.score == null ? "Unscored" : String(agent.score) + "/100"));
-    card.append(top, el("p", agent.rationale));
+    const agentOutlook = scoreOutlook(agent.score);
+    const heading = el("header", undefined, "agent-heading");
+    const signal = el("span", agentOutlook.agentLabel, "agent-outlook");
+    signal.dataset.outlook = agentOutlook.tone;
+    heading.append(el("h3", agentTitle(agent, index)), signal);
+    const evidence = el("div", undefined, "agent-evidence");
+    evidence.append(el("p", agent.rationale));
     if (agent.sources.length) {
       const info = el("details");
       info.append(el("summary", agent.sources.length === 1 ? "Source" : agent.sources.length + " sources"));
@@ -399,11 +466,11 @@ function renderResult(result) {
         list.append(item);
       }
       info.append(list);
-      card.append(info);
+      evidence.append(info);
     }
+    card.append(heading, scoreRing(agent.score, agentOutlook), evidence);
     return card;
   }));
-  $("trace-list").replaceChildren(...result.trace.map(call => el("li", call.role + " · " + call.tool + " · " + call.status + " · " + call.ms + " ms")));
 }
 
 function listRow(title, sub, action, onClick) {
@@ -427,7 +494,8 @@ function renderWatchlist() {
 
 function renderHistory() {
   const rows = history.map(result => listRow(result.ticker + " · " + ranges[result.horizon] + " · " + (result.score == null ? "Unscored" : result.score + "/100"),
-    providerLabel(result.provider) + " · " + eventDate.format(new Date(result.createdAt)), "Open result", () => {
+    (Number.isFinite(result.score) ? scoreOutlook(result.score).label + " · " : "")
+      + providerLabel(result.provider) + " · " + eventDate.format(new Date(result.createdAt)), "Open result", () => {
       selectSettings({ provider: result.provider, horizon: result.horizon, agentCount: result.agentCount });
       openView("research");
       chooseStock(result.ticker, true);
@@ -582,8 +650,8 @@ $("analysis-form").addEventListener("submit", async event => {
   const button = $("run-button");
   const ticker = stock.ticker;
   const currentUser = signedInVersion;
-  button.disabled = true;
-  button.textContent = "Running agents…";
+  button.setAttribute("aria-busy", "true");
+  updateAnalysisControls();
   notice();
   try {
     const { result } = await api("/api/analysis", "POST", { ticker, ...settings() });
@@ -597,12 +665,18 @@ $("analysis-form").addEventListener("submit", async event => {
     if (stock?.ticker !== ticker || $("research").hidden) notice(ticker + " analysis saved to history.");
   } catch (error) { if (currentUser === signedInVersion) notice(error.message, true); }
   finally {
-    button.textContent = "Run analysis ";
-    button.append(el("span", "↗"));
-    button.disabled = !$("provider").value;
+    button.removeAttribute("aria-busy");
+    updateAnalysisControls();
   }
 });
 new ResizeObserver(drawChart).observe($("chart").parentElement);
+
+$("score-scale").replaceChildren(...outlookBands.map((band, index) => {
+  const max = index === 0 ? 100 : outlookBands[index - 1].min - 1;
+  const item = el("li", band.min + "–" + max + " " + band.label);
+  item.dataset.outlook = band.tone;
+  return item;
+}));
 
 const emailReturn = new URLSearchParams(location.hash.slice(1));
 const emailConfirmed = emailReturn.get("type") === "signup" && emailReturn.has("access_token");

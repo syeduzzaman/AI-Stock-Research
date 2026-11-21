@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Stock Research Dashboard</title>
+  <title>AI Stock Research</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <div class="shell">
     <aside class="sidebar">
-      <a class="brand" href="/" aria-label="Stock Research home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span> Stock Research</a>
+      <a class="brand" href="/" aria-label="AI Stock Research home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span> AI Stock Research</a>
       <nav class="navigation" aria-label="Workspace">
         <button type="button" class="nav-item selected" data-view="research" aria-current="page"><span aria-hidden="true">◫</span> Research</button>
         <button type="button" class="nav-item" data-view="watchlist"><span aria-hidden="true">☆</span> Watchlist</button>
@@ -25,7 +25,7 @@
     </aside>
     <main class="content">
       <header class="page-top">
-        <div><h1 id="view-title">Stock research</h1><p id="view-description">Run independent analyses and follow the evidence behind each score.</p></div>
+        <div><h1 id="view-title">AI Stock Research</h1><p id="view-description">Run independent analyses and follow the evidence behind each score.</p></div>
         <span class="data-state" id="data-state" hidden></span>
       </header>
       <section class="market-overview" id="market-overview" aria-labelledby="market-overview-title" hidden>
@@ -80,7 +80,7 @@
               <div class="chart-labels" id="chart-labels" aria-hidden="true"></div>
             </article>
             <article class="card setup">
-              <h2>Run an analysis</h2>
+              <h2 id="analysis-title">AI stock analysis</h2>
               <form id="analysis-form">
                 <fieldset><legend>Time horizon</legend><div class="segmented">
                   <label><input type="radio" name="horizon" value="1w"><span>1W</span></label>
@@ -94,15 +94,27 @@
                   <label><input type="radio" name="agents" value="5"><span>5 agents</span></label>
                 </div></fieldset>
                 <ul class="agent-preview" id="agent-preview"></ul>
-                <button class="primary run" type="submit" id="run-button">Run analysis <span aria-hidden="true">↗</span></button>
+                <button class="primary run" type="submit" id="run-button"><span id="run-label">Run AI analysis</span> <span aria-hidden="true">↗</span></button>
                 <button class="text-button save-pref" id="save-pref" type="button">Save these defaults</button>
               </form>
             </article>
           </div>
           <section class="results" id="result-panel" aria-labelledby="result-title" hidden>
-            <header class="section-header"><div><h2 id="result-title">Agent analysis</h2><p id="result-meta"></p></div><strong id="result-score" class="score-display"></strong></header>
+            <header class="card result-summary" id="result-summary">
+              <div>
+                <h2 id="result-title">Agent analysis</h2>
+                <p id="result-meta" class="result-meta"></p>
+                <p id="result-outlook" class="outlook-label"></p>
+                <p id="result-explanation" class="result-explanation"></p>
+              </div>
+              <div id="result-score" class="result-score"></div>
+              <details class="score-guide">
+                <summary>How to read the score</summary>
+                <p>The overall score averages the agents with usable results. The scale describes how the evidence leans over the selected time horizon.</p>
+                <ul id="score-scale" class="score-scale"></ul>
+              </details>
+            </header>
             <div id="agent-results" class="agent-results"></div>
-            <details class="trace card"><summary>MCP tool activity</summary><ul id="trace-list"></ul></details>
           </section>
         </section>
         <section id="watchlist" class="view card table-card" aria-labelledby="view-title" hidden><div id="watch-items"></div></section>

@@ -151,7 +151,7 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
         const [watchlist, portfolio, history, preferences] = await Promise.all([
           accounts.watchlist(user), accounts.portfolio(user), accounts.history(user), accounts.preferences(user)
         ]);
-        json(response, 200, { watchlist, portfolio, history, preferences });
+        json(response, 200, { watchlist, portfolio, history: history.map(({ trace, ...result }) => result), preferences });
         return;
       }
       if (method === "PUT" && path === "/api/preferences") {

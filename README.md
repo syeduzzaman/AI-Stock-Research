@@ -1,6 +1,6 @@
 # AI Stock Research
 
-A personal stock research workspace with watchlists, manual holdings, configurable multi-agent analysis, cited filing excerpts, and visible MCP tool activity.
+A personal stock research workspace with watchlists, manual holdings, configurable multi-agent analysis, and cited filing excerpts.
 
 ## Run with Docker
 
@@ -26,7 +26,7 @@ node --env-file-if-exists=.env src/server.mjs
 
 Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo needs no accounts, packages, or API keys. It uses synthetic closing prices, financial numbers, and filing excerpts. The same browser session can reopen watchlists, manual positions, analysis preferences, and results stored in local SQLite.
 
-Try searching for **MU**, saving it, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources and **MCP tool activity**. Open **Analysis history** to retrieve the saved result, or use **Portfolio** to enter shares and an average cost in USD.
+Try searching for **MU**, saving it, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources to read the evidence. Open **Analysis history** to retrieve the saved result, or use **Portfolio** to enter shares and an average cost in USD.
 
 ## Connect a dedicated Supabase project
 
@@ -51,8 +51,8 @@ In this version the catalog is a 12-stock sample, with Nasdaq-100 and S&P 500 fi
 
 - **MCP**. The Node app launches a separate stdio MCP server, initializes protocol version 2025-11-25, discovers tools, and calls the declared read-only tools through JSON-RPC. The server exposes get_price_history, get_company_financials, and search_filings.
 - **Retrieval**. The server extracts passages from recent filings, ranks them against each specialist's query, and sends matching excerpts with source IDs, dates and links to the analysis backend. The first version uses lexical retrieval.
-- **Agents**. Three or five specialists run independently. Each agent receives the evidence for its role and scores the selected horizon on a shared 0–100 scale. The backend validates model output and references, records tool timing, and averages the scored agents. The UI shows score coverage and range.
-- **Scoring**. The score summarizes directional evidence. It is uncalibrated. The horizon controls the question sent to each model and the price-change window. Portfolio values use the latest available close shown on each row.
+- **Agents**. Three or five specialists run independently. Each agent receives the evidence for its role and scores the selected horizon on a shared 0–100 scale. The backend validates model output and references and averages the scored agents. The UI shows score coverage and range.
+- **Scoring**. The overall score averages agents with usable results. The interface labels the direction and strength of the evidence on a 0–100 scale. The horizon controls the question sent to each model and the price-change window. Portfolio values use the latest available close shown on each row.
 
 The local demo and end-to-end test do not require external services. The hosted configuration uses these service references:
 
