@@ -1,3 +1,5 @@
+import { setTimeout as wait } from "node:timers/promises";
+
 export const stocks = [
   { ticker: "NVDA", name: "NVIDIA", sector: "Semiconductors", cik: 1045810, indexes: ["nasdaq", "sp500"], seed: 83 },
   { ticker: "MU", name: "Micron Technology", sector: "Semiconductors", cik: 723125, indexes: ["nasdaq", "sp500"], seed: 54 },
@@ -14,7 +16,7 @@ export const stocks = [
 ];
 
 export const mode = process.env.MARKET_DATA_MODE === "live" ? "live" : "demo";
-const fixtureDate = "2025-03-31";
+export const fixtureDate = "2025-03-31";
 
 export function findStock(ticker) {
   return stocks.find(stock => stock.ticker === ticker);
@@ -39,6 +41,7 @@ function demoHistory(stock) {
 }
 
 const cached = new Map();
+let nextSecRequest = 0;
 
 async function cachedFetch(key, ttl, request) {
   const entry = cached.get(key);
@@ -55,6 +58,10 @@ async function cachedFetch(key, ttl, request) {
 
 async function sec(path) {
   if (!process.env.SEC_USER_AGENT) throw new Error("Set SEC_USER_AGENT to an app name and contact email.");
+  const now = Date.now();
+  const start = Math.max(now, nextSecRequest);
+  nextSecRequest = start + 125;
+  if (start > now) await wait(start - now);
   const response = await fetch(path, {
     headers: { "User-Agent": process.env.SEC_USER_AGENT, Accept: "application/json, text/html" },
     signal: AbortSignal.timeout(12_000)
@@ -135,22 +142,39 @@ function segments(html) {
     .slice(0, 3600);
 }
 
+async function companyReports(stock) {
+  const cik = String(stock.cik).padStart(10, "0");
+  return cachedFetch("submissions:" + cik, 600_000, async () => {
+    const response = await sec("https://data.sec.gov/submissions/CIK" + cik + ".json");
+    const recent = (await response.json()).filings.recent;
+    const rows = recent.form.map((form, i) => ({
+      form, date: recent.filingDate[i], accession: recent.accessionNumber[i], document: recent.primaryDocument[i]
+    })).filter(row => /^(8-K|10-Q|10-K)(\/A)?$/.test(row.form)
+      && /^\d{4}-\d{2}-\d{2}$/.test(row.date)
+      && /^\d{10}-\d{2}-\d{6}$/.test(row.accession)
+      && /^[a-zA-Z0-9_.-]+\.html?$/.test(row.document));
+    return rows.map(({ form, date, accession, document }) => ({
+      form, date, accession,
+      url: "https://www.sec.gov/Archives/edgar/data/" + stock.cik + "/" + accession.replaceAll("-", "") + "/" + document
+    }));
+  });
+}
+
+export async function recentFilings(stock) {
+  if (mode === "demo") return [{ form: "10-Q", date: fixtureDate, url: null }];
+  return (await companyReports(stock)).map(({ form, date, url }) => ({ form, date, url }));
+}
+
 async function filingPassages(stock) {
   if (mode === "demo") return fixturePassages(stock);
   const cik = String(stock.cik).padStart(10, "0");
   return cachedFetch("filings:" + cik, 3_600_000, async () => {
-    const response = await sec("https://data.sec.gov/submissions/CIK" + cik + ".json");
-    const recent = (await response.json()).filings.recent;
-    const rows = recent.form.map((form, i) => ({
-      form, i, date: recent.filingDate[i], accession: recent.accessionNumber[i], document: recent.primaryDocument[i]
-    })).filter(row => ["10-Q", "10-K"].includes(row.form) && /^\d{10}-\d{2}-\d{6}$/.test(row.accession)
-      && /^[a-zA-Z0-9_.-]+\.html?$/.test(row.document)).slice(0, 2);
+    const rows = (await companyReports(stock)).filter(row => ["10-Q", "10-K"].includes(row.form)).slice(0, 2);
     const passages = [];
-    for (const row of rows) {
-      const url = "https://www.sec.gov/Archives/edgar/data/" + stock.cik + "/" + row.accession.replaceAll("-", "") + "/" + row.document;
+    for (const { url, accession, form, date } of rows) {
       const html = await (await sec(url)).text();
       passages.push(...segments(html).map((text, i) => ({
-        id: row.accession + "-" + (i + 1), title: "SEC " + row.form, date: row.date, text, url
+        id: accession + "-" + (i + 1), title: "SEC " + form, date, text, url
       })));
     }
     return passages;

@@ -146,6 +146,18 @@
             </form>
             <p class="empty" id="watch-all" hidden data-i18n>All covered stocks are already on your watchlist.</p>
           </article>
+          <section class="card watch-updates" aria-labelledby="watch-updates-title">
+            <div class="watch-updates-header">
+              <div>
+                <h2 id="watch-updates-title" data-i18n>Watchlist updates</h2>
+                <p id="watch-updates-caption"></p>
+              </div>
+              <button class="secondary" id="watch-updates-refresh" type="button" data-i18n hidden>Refresh updates</button>
+            </div>
+            <p class="watch-updates-status" id="watch-updates-status" role="status" hidden></p>
+            <ul class="watch-updates-list" id="watch-updates-list" aria-labelledby="watch-updates-title"></ul>
+            <button class="text-button watch-updates-more" id="watch-updates-more" type="button" aria-expanded="false" aria-controls="watch-updates-list" hidden></button>
+          </section>
           <div id="watch-items" class="position-list"></div>
         </section>
         <section id="portfolio" class="view workspace-list" aria-labelledby="view-title" hidden>

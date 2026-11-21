@@ -49,6 +49,7 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.deepEqual(health.result, { status: "ok" });
     assert.equal((await request("/", { host: "elsewhere.example" })).status, 403);
     assert.equal((await request("/api/workspace")).status, 401);
+    assert.equal((await request("/api/watchlist/updates")).status, 401);
     assert.equal((await request("/api/market-overview", { origin: "https://elsewhere.example" })).status, 403);
     const highlights = await request("/api/market-overview");
     assert.equal(highlights.status, 200);
@@ -69,6 +70,11 @@ test("local workspace stores personal data, isolates accounts, and completes MCP
     assert.equal(configured.providers.find(item => item.id === "gemini").enabled, false);
     assert.deepEqual((await call("/api/watchlist", "PUT", { ticker: "MU", add: true })).result.watchlist, ["MU"]);
     assert.equal((await call("/api/watchlist", "PUT", { ticker: "invalid", add: true })).status, 400);
+    assert.equal((await request("/api/watchlist/updates", { cookie, origin: "https://elsewhere.example" })).status, 403);
+    const updates = (await call("/api/watchlist/updates")).result;
+    assert.ok(updates.events.some(item => item.ticker === "MU" && item.kind === "filing" && item.form === "10-Q"));
+    assert.ok(updates.events.every(item => item.ticker === "MU"));
+    assert.deepEqual((await request("/api/watchlist/updates", { cookie: second })).result.events, []);
     assert.deepEqual((await call("/api/holdings", "PUT", { ticker: "MU", shares: 2.5, averageCost: 110 })).result.portfolio, [
       { ticker: "MU", shares: 2.5, average_cost: 110 }
     ]);

@@ -4,6 +4,7 @@ import { analyze, horizons, listProviders, marketSnapshot, roles } from "./analy
 import { confirmationMode, createAccounts, hosted, HttpError, readSession, sessionCookie } from "./accounts.mjs";
 import { connectMcp } from "./mcp-client.mjs";
 import { findStock, mode, publicStock, stocks } from "./market.mjs";
+import { watchlistUpdates } from "./watchlist-updates.mjs";
 
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 8082);
@@ -167,6 +168,13 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
         if (!findStock(ticker) || typeof add !== "boolean") throw new HttpError(400, "Choose a supported stock.");
         await accounts.setWatch(user, ticker, add);
         json(response, 200, { watchlist: await accounts.watchlist(user) });
+        return;
+      }
+      if (method === "GET" && path === "/api/watchlist/updates") {
+        verifyOrigin(request);
+        accounts.rateLimit("watchlist-updates:" + user.id, 12, 60_000);
+        const tickers = (await accounts.watchlist(user)).filter(ticker => findStock(ticker));
+        json(response, 200, await watchlistUpdates(mcp, tickers));
         return;
       }
       if (method === "PUT" && path === "/api/holdings") {

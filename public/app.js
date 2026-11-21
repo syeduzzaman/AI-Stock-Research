@@ -59,6 +59,7 @@ let saved = [];
 let holdings = [];
 let history = [];
 let watchPending = false;
+let watchUpdates;
 let holdingPending = false;
 const closingQuotes = new Map();
 
@@ -302,6 +303,7 @@ async function showAccount(account) {
   marketRequest += 1;
   closingQuotes.clear();
   watchPending = false;
+  watchUpdates = null;
   holdingPending = false;
   $("holding-fields").disabled = false;
   $("holding-save").disabled = false;
@@ -827,7 +829,99 @@ function stockOption(value, label) {
   return option;
 }
 
+function watchUpdateRow(update) {
+  const { ticker, kind, date } = update;
+  const row = el("li", undefined, "watch-update");
+  const info = el("div");
+  const title = el("p", undefined, "watch-update-title");
+  const daily = kind === "price";
+  title.append(el("strong", ticker), el("span", t(daily ? "Daily price move" : "SEC Form {form}", { form: update.form })));
+  if (daily) {
+    const move = el("strong", signedPercent.format(update.change / 100), "watch-update-move");
+    move.dataset.direction = update.change > 0 ? "up" : "down";
+    title.append(move);
+  }
+  const time = el("time", dateLabel(date));
+  time.dateTime = date;
+  const details = el("p", undefined, "watch-update-date");
+  details.append(time);
+  if (daily) details.append(" · " + t("Close {price}", { price: money.format(update.close) }));
+  if (!daily && !update.url) details.append(" · " + t("Demo filing"));
+  info.append(title, details);
+
+  const actions = el("div", undefined, "row-actions");
+  if (!daily && update.url?.startsWith("https://www.sec.gov/Archives/edgar/data/")) {
+    const link = el("a", t("Open SEC filing"), "secondary");
+    link.href = update.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.setAttribute("aria-label", t("Open {ticker} SEC Form {form}", { ticker, form: update.form }));
+    actions.append(link);
+  }
+  actions.append(positionAction("Research", t("Research {ticker}", { ticker }), () => openResearch(ticker)));
+  row.append(info, actions);
+  return row;
+}
+
+function renderWatchUpdates() {
+  const refresh = $("watch-updates-refresh");
+  const list = $("watch-updates-list");
+  const status = $("watch-updates-status");
+  const more = $("watch-updates-more");
+  const { data, loading, failed, expanded } = watchUpdates ?? {};
+  refresh.hidden = !saved.length;
+  refresh.disabled = Boolean(loading);
+  list.setAttribute("aria-busy", String(Boolean(loading)));
+  $("watch-updates-caption").textContent = data
+    ? t("Past {days} days · Close-to-close moves of {minimum}% or more", { days: data.days, minimum: data.minimumMove })
+    : t("Recent filings and large moves in daily closing prices.");
+
+  const visible = data ? data.events.slice(0, expanded ? undefined : 6) : [];
+  list.replaceChildren(...visible.map(watchUpdateRow));
+  more.hidden = !data || data.events.length <= 6;
+  more.textContent = t(expanded ? "Show fewer updates" : "Show more updates");
+  more.setAttribute("aria-expanded", String(Boolean(expanded)));
+
+  const messages = [];
+  if (!saved.length) messages.push(t("Add a stock to see its filings and daily price moves here."));
+  if (loading) messages.push(t("Loading watchlist updates…"));
+  if (failed) messages.push(t(data ? "Refresh failed. Showing the last loaded updates." : "Updates could not be loaded. Try refreshing."));
+  if (data) {
+    const { prices, filings } = data.unavailable;
+    if (prices.length) messages.push(t("Price moves unavailable for {stocks}.", { stocks: prices.join(", ") }));
+    if (filings.length) messages.push(t("Filings unavailable for {stocks}.", { stocks: filings.join(", ") }));
+    if (!data.events.length) messages.push(t(prices.length || filings.length
+      ? "No updates from the available data." : "No qualifying updates in this period."));
+    if (visible.length < data.total) messages.push(t("Showing {shown} of {total} updates.", { shown: visible.length, total: data.total }));
+  }
+  status.textContent = messages.join(" ");
+  status.hidden = !messages.length;
+}
+
+async function loadWatchUpdates(force = false) {
+  const key = [...saved].sort().join(",");
+  const existing = watchUpdates?.key === key ? watchUpdates : null;
+  if (!key || existing?.loading || (!force && existing?.expires > Date.now())) {
+    if (!key) watchUpdates = null;
+    renderWatchUpdates();
+    return;
+  }
+  const request = { key, data: existing?.data, expanded: existing?.expanded, loading: true };
+  watchUpdates = request;
+  renderWatchUpdates();
+  try {
+    request.data = await api("/api/watchlist/updates");
+  } catch {
+    request.failed = true;
+  } finally {
+    request.loading = false;
+    request.expires = Date.now() + 120_000;
+    if (watchUpdates === request) renderWatchUpdates();
+  }
+}
+
 function renderWatchlist() {
+  void loadWatchUpdates();
   const picker = $("watch-stock");
   const selection = picker.value;
   const available = config.stocks.filter(item => !saved.includes(item.ticker));
@@ -882,6 +976,7 @@ async function saveWatch(ticker, add, button) {
     const data = await api("/api/watchlist", "PUT", { ticker, add });
     if (version !== signedInVersion) return;
     saved = data.watchlist;
+    watchUpdates = null;
     changed = true;
     notice(add ? "{ticker} added to your watchlist." : "{ticker} removed from your watchlist.", false, { ticker });
   } catch (error) {
@@ -1103,6 +1198,11 @@ for (const id of ["stock-holding", "result-holding"]) {
   $(id).addEventListener("click", () => openHolding(stock.ticker));
 }
 $("watch-stock").addEventListener("change", updateWatchPicker);
+$("watch-updates-refresh").addEventListener("click", () => { void loadWatchUpdates(true); });
+$("watch-updates-more").addEventListener("click", () => {
+  watchUpdates.expanded = !watchUpdates.expanded;
+  renderWatchUpdates();
+});
 $("watch-form").addEventListener("submit", event => {
   event.preventDefault();
   void saveWatch($("watch-stock").value, true, $("watch-add"));

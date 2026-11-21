@@ -32,6 +32,8 @@ Try searching for **MU**, selecting **3M** and **5 agents**, then running an ana
 
 Run an analysis again with the same settings and open **Compare with previous analysis** in the result. It compares the nearest earlier matching run in your saved history and highlights score changes, newly cited sources, and updated data snapshots.
 
+**Watchlist updates** shows SEC company reports and moves of at least 3% between daily closes for the stocks you follow over the past 14 days. In live mode, filing updates link to SEC EDGAR. The demo uses sample filings and prices.
+
 ## Connect a dedicated Supabase project
 
 1. In the new project, run [the workspace migration](supabase/migrations/202611200001_workspace.sql) in the SQL Editor.
@@ -53,7 +55,7 @@ In this version the catalog is a 12-stock sample, with Nasdaq-100 and S&P 500 fi
 
 ## Architecture
 
-- **MCP**. The Node app launches a separate stdio MCP server, initializes protocol version 2025-11-25, discovers tools, and calls the declared read-only tools through JSON-RPC. The server exposes get_price_history, get_company_financials, and search_filings.
+- **MCP**. The Node app launches a separate stdio MCP server, initializes protocol version 2025-11-25, discovers tools, and calls the declared read-only tools through JSON-RPC. The server exposes get_price_history, get_company_financials, get_recent_filings, and search_filings.
 - **Retrieval**. The server extracts passages from recent filings, ranks them against each specialist's query, and sends matching excerpts with source IDs, dates and links to the analysis backend. The first version uses lexical retrieval.
 - **Agents**. Three or five specialists run independently. Each agent receives the evidence for its role and scores the selected horizon on a shared 0–100 scale. The backend validates model output and references and averages the scored agents. The UI shows score coverage and range.
 - **Scoring**. The overall score averages agents with usable results. The interface labels the direction and strength of the evidence on a 0–100 scale. The horizon controls the question sent to each model and the price-change window. Portfolio values use the latest available close shown on each row.

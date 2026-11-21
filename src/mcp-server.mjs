@@ -1,11 +1,12 @@
 import { createInterface } from "node:readline";
-import { findStock, financials, mode, priceHistory, searchFilings } from "./market.mjs";
+import { findStock, financials, mode, priceHistory, recentFilings, searchFilings } from "./market.mjs";
 
 const ticker = { type: "string", description: "A US stock symbol from the app catalog." };
 const schema = properties => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 const tools = [
   { name: "get_price_history", description: "Daily closing prices in chronological order.", inputSchema: schema({ ticker }) },
   { name: "get_company_financials", description: "Cash, debt, operating cash flow and revenue where reported.", inputSchema: schema({ ticker }) },
+  { name: "get_recent_filings", description: "Dates and links for recent SEC company filings.", inputSchema: schema({ ticker }) },
   { name: "search_filings", description: "Retrieve relevant filing excerpts with source IDs and dates.", inputSchema: schema({ ticker, query: { type: "string" } }) }
 ].map(tool => ({ ...tool, annotations: { readOnlyHint: true } }));
 const compatible = ["2025-11-25", "2025-06-18", "2025-03-26"];
@@ -26,6 +27,7 @@ async function dispatch(method, params) {
     switch (params.name) {
       case "get_price_history": data = { prices: await priceHistory(stock) }; break;
       case "get_company_financials": data = { financials: await financials(stock) }; break;
+      case "get_recent_filings": data = { filings: await recentFilings(stock) }; break;
       case "search_filings": {
         const query = params.arguments.query;
         if (typeof query !== "string" || !query.trim() || query.length > 400) throw new Error("Provide a search query up to 400 characters.");
