@@ -2,6 +2,8 @@
 
 A personal stock research workspace with watchlists, manual holdings, configurable multi-agent analysis, and cited filing excerpts.
 
+Use **English** or **Deutsch** at the top of the dashboard to switch languages. The browser remembers your choice. New AI analyses save explanations in both languages in one run. The German view labels older English-only AI explanations and English filing excerpts.
+
 ## Run with Docker
 
 Start Docker Desktop with Linux containers and run this command from the project folder.

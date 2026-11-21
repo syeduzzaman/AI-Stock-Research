@@ -1,19 +1,54 @@
+import { translate } from "./i18n.js";
+
 const $ = id => document.getElementById(id);
 const ranges = { "1w": "1 week", "1m": "1 month", "3m": "3 months", "6m": "6 months" };
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const signedPercent = new Intl.NumberFormat("en-US", {
-  style: "percent", signDisplay: "exceptZero", minimumFractionDigits: 2, maximumFractionDigits: 2
+const languageKey = "stock-research-language";
+const staticCopy = [...document.querySelectorAll("[data-i18n]")].map(node => [node, node.textContent]);
+const staticAttributes = [...document.querySelectorAll("[data-i18n-attrs]")].map(node => {
+  const attr = node.dataset.i18nAttrs;
+  return [node, attr, node.getAttribute(attr)];
 });
-const signedMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", signDisplay: "exceptZero" });
-const shareCount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
-const calendar = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-const eventDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
+const languageButtons = document.querySelectorAll("[data-language]");
+
+function preferredLanguage() {
+  try { return localStorage.getItem(languageKey) === "de" ? "de" : "en"; }
+  catch { return "en"; }
+}
+
+function formatters(language) {
+  const locale = language === "de" ? "de-DE" : "en-US";
+  const currency = { style: "currency", currency: "USD" };
+  return {
+    money: new Intl.NumberFormat(locale, currency),
+    signedMoney: new Intl.NumberFormat(locale, { ...currency, signDisplay: "exceptZero" }),
+    signedPercent: new Intl.NumberFormat(locale, {
+      style: "percent", signDisplay: "exceptZero", minimumFractionDigits: 2, maximumFractionDigits: 2
+    }),
+    shareCount: new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }),
+    decimal: new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    calendar: new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", timeZone: "UTC" }),
+    quoteDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }),
+    eventDate: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" })
+  };
+}
+
+let language = preferredLanguage();
+let { money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate } = formatters(language);
+const t = (message, values) => translate(language, message, values);
+
+function dateLabel(date) {
+  return quoteDate.format(new Date(date));
+}
+
 const defaults = { horizon: "1m", provider: "demo", agentCount: 5 };
 let config;
 let user;
 let authAction = "login";
 let stock;
 let market;
+let marketStatus;
+let displayedResult;
+let lastNotice;
 let marketRequest = 0;
 let featuredQuotes;
 let loadingFeaturedQuotes = false;
@@ -42,11 +77,19 @@ async function api(path, method = "GET", body) {
   return data;
 }
 
-function notice(message, isError = false) {
+function notice(message, isError = false, values) {
+  lastNotice = { message, isError, values };
+  renderNotice();
+}
+
+function renderNotice() {
+  const { message, isError, values } = lastNotice ?? {};
   const box = $("notice");
   box.hidden = !message;
-  box.textContent = message ?? "";
-  box.classList.toggle("error", isError);
+  const copy = message ? t(message, values) : "";
+  box.textContent = language === "de" && isError && copy === message
+    ? t("The request could not be completed.") : copy;
+  box.classList.toggle("error", Boolean(isError));
 }
 
 function settings() {
@@ -70,7 +113,7 @@ function selectSettings(input) {
 }
 
 function agentTitle(agent, index) {
-  return "Agent " + (index + 1) + " · " + agent.name;
+  return t("Agent {number} · {name}", { number: index + 1, name: t(agent.name) });
 }
 
 function showAgentPreview() {
@@ -84,8 +127,8 @@ function updateAnalysisControls() {
   const demo = provider === "demo";
   const button = $("run-button");
   const running = button.hasAttribute("aria-busy");
-  $("analysis-title").textContent = demo ? "Demo stock analysis" : "AI stock analysis";
-  $("run-label").textContent = running ? "Running analysis…" : demo ? "Run demo analysis" : "Run AI analysis";
+  $("analysis-title").textContent = t(demo ? "Demo stock analysis" : "AI stock analysis");
+  $("run-label").textContent = t(running ? "Running analysis…" : demo ? "Run demo analysis" : "Run AI analysis");
   button.disabled = running || !provider;
 }
 
@@ -96,12 +139,16 @@ const viewTitles = {
   history: ["Analysis history", "Reopen scores, explanations, and the evidence from previous runs."]
 };
 
+function renderViewTitle(view) {
+  const [title, description] = viewTitles[view];
+  $("view-title").textContent = t(title);
+  $("view-description").textContent = t(description);
+}
+
 function openView(view) {
   if (!user || $("workspace").hidden) return;
   const changedView = $(view).hidden;
-  const [title, description] = viewTitles[view];
-  $("view-title").textContent = title;
-  $("view-description").textContent = description;
+  renderViewTitle(view);
   document.querySelectorAll(".view").forEach(item => { item.hidden = item.id !== view; });
   document.querySelectorAll("[data-view]").forEach(item => {
     item.classList.toggle("selected", item.dataset.view === view);
@@ -126,8 +173,7 @@ function renderMarketOverview() {
   $("market-overview").hidden = !showOverview;
   if (!showOverview) return;
 
-  $("market-overview-caption").textContent = config.marketMode === "demo"
-    ? "Synthetic closes · 20 sessions" : "Daily closes · 20 sessions";
+  $("market-overview-caption").textContent = t(config.marketMode === "demo" ? "Synthetic closes · 20 sessions" : "Daily closes · 20 sessions");
   const tiles = (featuredQuotes ?? config.featuredStocks).map(({ ticker, name, prices }) => {
     const tile = el(user ? "button" : "article", undefined, "market-tile");
     if (user) {
@@ -139,7 +185,7 @@ function renderMarketOverview() {
     identity.append(el("strong", ticker), el("span", name));
     tile.append(identity);
     if (!prices?.length) {
-      tile.append(el("span", prices ? "Price unavailable" : "Loading price…", "market-tile-status"));
+      tile.append(el("span", t(prices ? "Price unavailable" : "Loading price…"), "market-tile-status"));
       return tile;
     }
 
@@ -148,9 +194,9 @@ function renderMarketOverview() {
     const change = (latest.close - previous.close) / previous.close;
     const value = el("div", undefined, "market-tile-value");
     const close = el("strong", money.format(latest.close));
-    close.title = "Closing price on " + latest.date;
+    close.title = t("Closing price on {date}", { date: dateLabel(latest.date) });
     const daily = el("span", signedPercent.format(change), change < 0 ? "market-change negative" : "market-change");
-    daily.title = "Change from previous close";
+    daily.title = t("Change from previous close");
     value.append(close, daily);
     const chart = el("canvas", undefined, "market-sparkline");
     chart.setAttribute("aria-hidden", "true");
@@ -218,11 +264,11 @@ function authControls() {
   const login = hosted && authAction === "login";
   const enterCode = verify && config.confirmationMode === "code";
   const followLink = verify && !enterCode;
-  $("account-title").textContent = signup ? "Create your account" : verify ? "Check your email" : login ? "Sign in" : "Open the demo workspace";
-  $("account-intro").textContent = enterCode ? "Enter the verification code from your email."
+  $("account-title").textContent = t(signup ? "Create your account" : verify ? "Check your email" : login ? "Sign in" : "Open the demo workspace");
+  $("account-intro").textContent = t(enterCode ? "Enter the verification code from your email."
     : followLink ? "Open the email from Supabase Auth and select Confirm your email. Then sign in to AI Stock Research."
     : hosted ? "Your watchlist, holdings, and analyses are saved to your account."
-      : marketMode === "demo" ? "Try the research flow with synthetic prices and sample filing excerpts." : "Open a local workspace to research your stocks.";
+      : marketMode === "demo" ? "Try the research flow with synthetic prices and sample filing excerpts." : "Open a local workspace to research your stocks.");
   $("auth-fields").hidden = !hosted;
   $("username-field").hidden = !signup;
   $("password-field").hidden = !hosted || verify;
@@ -234,9 +280,9 @@ function authControls() {
   $("password").required = hosted && !verify;
   $("email-code").required = enterCode;
   $("password").autocomplete = signup ? "new-password" : "current-password";
-  $("sign-in").textContent = signup ? "Create account" : enterCode ? "Verify code" : followLink ? "Back to sign in" : login ? "Sign in" : "Open demo";
+  $("sign-in").textContent = t(signup ? "Create account" : enterCode ? "Verify code" : followLink ? "Back to sign in" : login ? "Sign in" : "Open demo");
   $("sign-in").formNoValidate = followLink;
-  $("auth-switch").textContent = login ? "Create account" : "Back to sign in";
+  $("auth-switch").textContent = t(login ? "Create account" : "Back to sign in");
 }
 
 async function showAccount(account) {
@@ -249,6 +295,7 @@ async function showAccount(account) {
   $("holding-save").disabled = false;
   user = account;
   void loadMarketOverview();
+  displayedResult = null;
   $("result-panel").hidden = true;
   $("account-area").hidden = !user;
   $("account-panel").hidden = Boolean(user);
@@ -262,12 +309,11 @@ async function showAccount(account) {
     $("watch-items").replaceChildren();
     $("holding-items").replaceChildren();
     prepareHolding();
+    renderViewTitle("research");
     authControls();
     return;
   }
-  const label = user.username ?? user.email ?? "Demo workspace";
-  $("account-name").textContent = label;
-  $("account-initials").textContent = label[0].toUpperCase();
+  renderAccountName();
   const data = await api("/api/workspace");
   if (version !== signedInVersion) return;
   saved = data.watchlist;
@@ -277,6 +323,12 @@ async function showAccount(account) {
   $("workspace").hidden = false;
   openView("research");
   await chooseStock(saved[0] ?? config.stocks[0].ticker);
+}
+
+function renderAccountName() {
+  const label = user.username ?? user.email ?? t("Demo workspace");
+  $("account-name").textContent = label;
+  $("account-initials").textContent = label[0].toUpperCase();
 }
 
 function renderSearch() {
@@ -295,7 +347,7 @@ function renderSearch() {
     });
     return button;
   });
-  $("search-results").replaceChildren(...(items.length ? items : [el("p", "No covered stock matched.", "empty")]));
+  $("search-results").replaceChildren(...(items.length ? items : [el("p", t("No covered stock matched."), "empty")]));
   $("search-results").hidden = false;
 }
 
@@ -303,13 +355,18 @@ async function chooseStock(ticker, keepResult = false) {
   stock = config.stocks.find(item => item.ticker === ticker);
   if (!stock) return;
   if (!keepResult) {
+    displayedResult = null;
     $("result-panel").hidden = true;
   }
   $("stock-name").textContent = stock.name;
   $("stock-logo").textContent = stock.ticker.slice(0, 1);
-  $("stock-symbol").textContent = stock.ticker + " · " + stock.sector;
+  renderStockSector();
   updateStockActions();
   await loadMarket();
+}
+
+function renderStockSector() {
+  $("stock-symbol").textContent = stock.ticker + " · " + t(stock.sector);
 }
 
 function updateStockActions() {
@@ -319,11 +376,11 @@ function updateStockActions() {
   for (const id of ["watch-toggle", "result-watch"]) {
     const button = $(id);
     button.setAttribute("aria-pressed", String(isSaved));
-    button.textContent = isSaved ? "★ On watchlist" : "☆ Add to watchlist";
+    button.textContent = t(isSaved ? "★ On watchlist" : "☆ Add to watchlist");
     button.disabled = !ticker || watchPending;
   }
   for (const id of ["stock-holding", "result-holding"]) {
-    $(id).textContent = hasHolding ? "Edit holding" : "Add holding";
+    $(id).textContent = t(hasHolding ? "Edit holding" : "Add holding");
     $(id).disabled = !ticker || holdingPending;
   }
 }
@@ -334,24 +391,36 @@ async function loadMarket() {
   market = null;
   $("price").textContent = "—";
   $("change").textContent = "";
-  $("market-date").textContent = "Loading closing prices…";
+  marketStatus = "Loading closing prices…";
   $("chart-labels").replaceChildren();
-  drawChart();
+  renderMarketQuote();
   try {
     const params = new URLSearchParams({ ticker: stock.ticker, horizon: settings().horizon });
     const result = await api("/api/market?" + params);
     if (current !== marketRequest) return;
     market = result;
-    const { from, asOf, last, change, sessions } = market.metrics;
-    $("price").textContent = money.format(last);
-    $("change").textContent = signedPercent.format(change / 100);
-    $("change").classList.toggle("negative", change < 0);
-    $("market-date").textContent = (market.marketMode === "demo" ? "Synthetic close" : "Latest available close") + " · " + asOf + " · " + sessions + " trading sessions";
-    $("chart-labels").replaceChildren(el("span", calendar.format(new Date(from))), el("span", calendar.format(new Date(asOf))));
-    drawChart();
+    renderMarketQuote();
   } catch {
-    if (current === marketRequest) $("market-date").textContent = "Closing prices are unavailable. Check the market data configuration.";
+    if (current !== marketRequest) return;
+    marketStatus = "Closing prices are unavailable. Check the market data configuration.";
+    renderMarketQuote();
   }
+}
+
+function renderMarketQuote() {
+  if (!market) {
+    $("market-date").textContent = marketStatus ? t(marketStatus) : "";
+    drawChart();
+    return;
+  }
+  const { from, asOf, last, change, sessions } = market.metrics;
+  $("price").textContent = money.format(last);
+  $("change").textContent = signedPercent.format(change / 100);
+  $("change").classList.toggle("negative", change < 0);
+  const modeLabel = t(market.marketMode === "demo" ? "Synthetic close" : "Latest available close");
+  $("market-date").textContent = [modeLabel, dateLabel(asOf), t("{count} trading sessions", { count: sessions })].join(" · ");
+  $("chart-labels").replaceChildren(el("span", calendar.format(new Date(from))), el("span", calendar.format(new Date(asOf))));
+  drawChart();
 }
 
 function drawChart() {
@@ -363,13 +432,17 @@ function drawChart() {
   canvas.height = Math.round(height * ratio);
   const context = canvas.getContext("2d");
   context.scale(ratio, ratio);
-  if (!market) return;
+  if (!market) {
+    canvas.setAttribute("aria-label", t("Closing-price chart for the selected horizon"));
+    return;
+  }
   const points = market.prices.slice(-market.metrics.sessions - 1);
   const lows = Math.min(...points.map(point => point.close));
   const highs = Math.max(...points.map(point => point.close));
   const spread = Math.max(highs - lows, 0.1);
   const margin = 10;
-  const labelWidth = 59;
+  context.font = "11px Segoe UI";
+  const labelWidth = Math.max(59, context.measureText(money.format(highs)).width + 10);
   const span = width - labelWidth - margin;
   const right = margin + span;
   const x = index => margin + span * index / (points.length - 1);
@@ -377,7 +450,6 @@ function drawChart() {
   const palette = getComputedStyle(canvas);
   context.strokeStyle = palette.getPropertyValue("--line").trim();
   context.fillStyle = palette.getPropertyValue("--muted").trim();
-  context.font = "11px Segoe UI";
   for (let i = 0; i < 4; i++) {
     const value = lows + spread * i / 3;
     const h = y(value);
@@ -401,11 +473,13 @@ function drawChart() {
   context.strokeStyle = color;
   context.lineWidth = 2;
   context.stroke();
-  canvas.setAttribute("aria-label", stock.ticker + " closing prices from " + market.metrics.from + " to " + market.metrics.asOf
-    + ", change " + market.metrics.change + " percent.");
+  canvas.setAttribute("aria-label", t("{ticker} closing prices from {from} to {to}, change {change}.", {
+    ticker: stock.ticker, from: dateLabel(market.metrics.from), to: dateLabel(market.metrics.asOf),
+    change: signedPercent.format(market.metrics.change / 100)
+  }));
 }
 
-const providerLabel = id => config.providers.find(item => item.id === id)?.label ?? id;
+const providerLabel = id => t(config.providers.find(item => item.id === id)?.label ?? id);
 
 const outlookBands = [
   { min: 80, tone: "strong-upside", label: "Strong upside signal", agentLabel: "Strongly favorable",
@@ -432,7 +506,7 @@ function scoreRing(score, outlook) {
   const hasScore = outlook !== unscored;
   ring.dataset.outlook = outlook.tone;
   ring.setAttribute("role", "img");
-  ring.setAttribute("aria-label", hasScore ? score + " out of 100" : "Unscored");
+  ring.setAttribute("aria-label", hasScore ? t("{score} out of 100", { score }) : t("Unscored"));
   if (hasScore) ring.style.setProperty("--score-progress", score / 100 + "turn");
   const value = el("div", undefined, "score-ring-value");
   value.setAttribute("aria-hidden", "true");
@@ -447,39 +521,102 @@ function explainOutlook(result, outlook) {
   const best = scored[0];
   const worst = scored.at(-1);
   if (best?.score >= 65 && worst?.score < 45) {
-    return outlook.description + " Agents disagreed. " + best.name + " was favorable (" + best.score
-      + "/100) and " + worst.name + " was unfavorable (" + worst.score + "/100).";
+    return t(outlook.description) + " " + t("Agents disagreed. {best} was favorable ({high}/100) and {worst} was unfavorable ({low}/100).", {
+      best: t(best.name), high: best.score, worst: t(worst.name), low: worst.score
+    });
   }
-  return outlook.description;
+  return t(outlook.description);
+}
+
+function localizedRationale(agent) {
+  if (language === "en") return agent.rationale;
+  if (agent.rationaleDe) return agent.rationaleDe;
+  const asText = t(agent.rationale);
+  if (asText !== agent.rationale) return asText;
+
+  const cash = /^Illustrative cash of \$([\d.]+)B versus \$([\d.]+)B of fixture debt\./.exec(agent.rationale);
+  if (cash) {
+    return t("Illustrative cash of ${cash}B versus ${debt}B of fixture debt. Operating cash generation also affects the score.", {
+      cash: decimal.format(Number(cash[1])), debt: decimal.format(Number(cash[2]))
+    });
+  }
+  const momentum = /^Synthetic closing prices moved (-?[\d.]+)% over (\d+) sessions\./.exec(agent.rationale);
+  if (momentum) {
+    return t("Synthetic closing prices moved {change}% over {count} sessions. The score moves with the strength and direction of that trend.", {
+      change: decimal.format(Number(momentum[1])), count: momentum[2]
+    });
+  }
+  const httpError = /^The model provider returned HTTP (\d+)\.$/.exec(agent.rationale);
+  return httpError ? t("The model provider returned HTTP {status}.", { status: httpError[1] }) : agent.rationale;
+}
+
+function parseSourceData(text) {
+  try { return JSON.parse(text); }
+  catch { return null; }
+}
+
+function localizedSource(source) {
+  const data = source.id?.endsWith("-data") ? parseSourceData(source.text) : null;
+  if (data) {
+    const entries = Object.hasOwn(data, "from")
+      ? [
+          ["From", dateLabel(data.from)], ["As of", dateLabel(data.asOf)],
+          ["First close", money.format(data.first)], ["Last close", money.format(data.last)],
+          ["Change", signedPercent.format(data.change / 100)], ["Trading sessions", shareCount.format(data.sessions)]
+        ]
+      : [
+          ["As of", data.as_of ? dateLabel(data.as_of) : "—"],
+          ...[["Cash", data.cash], ["Debt", data.debt], ["Operating cash flow", data.operatingCash], ["Revenue", data.revenue]]
+            .map(([label, value]) => [label, value == null ? "—" : money.format(value)])
+        ];
+    return { text: entries.map(([label, value]) => t(label) + " " + value).join(" · ") };
+  }
+  if (language === "en") return { text: source.text };
+  const synthetic = /^Synthetic (\w+) example\. (.*)$/.exec(source.text);
+  if (synthetic && !source.url) {
+    const lead = t("Synthetic {ticker} example.", { ticker: synthetic[1] });
+    return { text: lead + " " + synthetic[2].split(/(?<=\.) /).map(sentence => t(sentence)).join(" ") };
+  }
+  return { text: source.text, original: true };
 }
 
 function renderResult(result) {
+  displayedResult = result;
   $("result-panel").hidden = false;
-  $("result-title").textContent = result.ticker + " · " + ranges[result.horizon] + " outlook";
-  const range = result.min == null ? "" : " · Score range " + result.min + "–" + result.max;
-  const demo = result.marketMode === "demo" ? " · Synthetic evidence" : "";
-  $("result-meta").textContent = providerLabel(result.provider) + " · " + result.scoredAgents + " of " + result.agentCount + " agents scored" + range + demo;
+  $("result-title").textContent = t("{ticker} · {range} outlook", { ticker: result.ticker, range: t(ranges[result.horizon]) });
+  const summary = [
+    providerLabel(result.provider),
+    t("{scored} of {total} agents scored", { scored: result.scoredAgents, total: result.agentCount })
+  ];
+  if (result.min != null) summary.push(t("Score range {min}–{max}", { min: result.min, max: result.max }));
+  if (result.marketMode === "demo") summary.push(t("Synthetic evidence"));
+  $("result-meta").textContent = summary.join(" · ");
   const outlook = scoreOutlook(result.score);
   $("result-summary").dataset.outlook = outlook.tone;
-  $("result-outlook").textContent = outlook.label;
+  $("result-outlook").textContent = t(outlook.label);
   $("result-explanation").textContent = explainOutlook(result, outlook);
   $("result-score").replaceChildren(scoreRing(result.score, outlook));
   $("agent-results").replaceChildren(...result.agents.map((agent, index) => {
     const card = el("article", undefined, "card agent-card");
     const agentOutlook = scoreOutlook(agent.score);
     const heading = el("header", undefined, "agent-heading");
-    const signal = el("span", agentOutlook.agentLabel, "agent-outlook");
+    const signal = el("span", t(agentOutlook.agentLabel), "agent-outlook");
     signal.dataset.outlook = agentOutlook.tone;
     heading.append(el("h3", agentTitle(agent, index)), signal);
     const evidence = el("div", undefined, "agent-evidence");
-    evidence.append(el("p", agent.rationale));
+    const rationale = el("p", localizedRationale(agent));
+    if (language === "de" && !agent.rationaleDe && rationale.textContent === agent.rationale) {
+      rationale.lang = "en";
+      evidence.append(el("small", t("English original"), "content-language"));
+    }
+    evidence.append(rationale);
     if (agent.sources.length) {
       const info = el("details");
-      info.append(el("summary", agent.sources.length === 1 ? "Source" : agent.sources.length + " sources"));
+      info.append(el("summary", agent.sources.length === 1 ? t("Source") : t("{count} sources", { count: agent.sources.length })));
       const list = el("ul");
       for (const source of agent.sources) {
         const item = el("li");
-        const label = source.title + (source.date ? " · " + source.date : "");
+        const label = t(source.title) + (source.date ? " · " + dateLabel(source.date) : "");
         if (source.url?.startsWith("https://")) {
           const link = el("a", label);
           link.href = source.url;
@@ -489,7 +626,13 @@ function renderResult(result) {
         } else {
           item.append(el("span", label));
         }
-        item.append(el("blockquote", source.text));
+        const { text, original } = localizedSource(source);
+        const excerpt = el("blockquote", text);
+        if (original) {
+          excerpt.lang = "en";
+          item.append(el("small", t("Original excerpt in English"), "content-language"));
+        }
+        item.append(excerpt);
         list.append(item);
       }
       info.append(list);
@@ -504,7 +647,7 @@ function listRow(title, sub, action, onClick) {
   const row = el("div", undefined, "list-row");
   const detail = el("div");
   detail.append(el("h3", title), el("p", sub));
-  const button = el("button", action, "secondary");
+  const button = el("button", t(action), "secondary");
   button.type = "button";
   button.addEventListener("click", onClick);
   row.append(detail, button);
@@ -528,7 +671,7 @@ function loadClose(ticker) {
 }
 
 function positionAction(text, label, onClick) {
-  const button = el("button", text, "secondary");
+  const button = el("button", t(text), "secondary");
   button.type = "button";
   button.setAttribute("aria-label", label);
   button.addEventListener("click", onClick);
@@ -542,7 +685,7 @@ function positionRow(ticker, subtitle) {
   const identity = el("div");
   identity.append(el("h3", name ? ticker + " · " + name : ticker), el("p", subtitle));
   const actions = el("div", undefined, "row-actions");
-  actions.append(positionAction("Research", "Research " + ticker, () => openResearch(ticker)));
+  actions.append(positionAction("Research", t("Research {ticker}", { ticker }), () => openResearch(ticker)));
   const metrics = el("dl", undefined, "position-metrics");
   heading.append(identity, actions);
   row.append(heading, metrics);
@@ -551,21 +694,21 @@ function positionRow(ticker, subtitle) {
 
 function addMetric(group, label, initial = "—") {
   const term = el("div");
-  const value = el("dd", initial);
-  term.append(el("dt", label), value);
+  const value = el("dd", t(initial));
+  term.append(el("dt", t(label)), value);
   group.append(term);
   return value;
 }
 
 function setMetric(node, value, detail, change) {
-  node.textContent = value;
+  node.textContent = t(value);
   if (detail) node.append(el("small", detail));
   if (change) node.dataset.direction = change < 0 ? "down" : "up";
 }
 
 function emptyPosition(title, description) {
   const card = el("div", undefined, "card position-empty");
-  card.append(el("h3", title), el("p", description));
+  card.append(el("h3", t(title)), el("p", t(description)));
   return card;
 }
 
@@ -579,7 +722,7 @@ function renderWatchlist() {
   const picker = $("watch-stock");
   const selection = picker.value;
   const available = config.stocks.filter(item => !saved.includes(item.ticker));
-  picker.replaceChildren(stockOption("", "Choose a stock"), ...available.map(item => stockOption(item.ticker, item.ticker + " · " + item.name)));
+  picker.replaceChildren(stockOption("", t("Choose a stock")), ...available.map(item => stockOption(item.ticker, item.ticker + " · " + item.name)));
   if (available.some(item => item.ticker === selection)) picker.value = selection;
   $("watch-form").hidden = !available.length;
   $("watch-all").hidden = Boolean(available.length);
@@ -587,8 +730,8 @@ function renderWatchlist() {
 
   const rows = saved.map(ticker => {
     const item = config.stocks.find(item => item.ticker === ticker);
-    const { row, actions, metrics } = positionRow(ticker, item?.sector ?? "Saved stock");
-    actions.append(positionAction("Remove", "Remove " + ticker + " from watchlist", event => {
+    const { row, actions, metrics } = positionRow(ticker, t(item?.sector ?? "Saved stock"));
+    actions.append(positionAction("Remove", t("Remove {ticker} from watchlist", { ticker }), event => {
       void saveWatch(ticker, false, event.currentTarget);
     }));
     const close = addMetric(metrics, "Latest close", "Loading…");
@@ -596,15 +739,15 @@ function renderWatchlist() {
     const lastRun = history.find(item => item.ticker === ticker);
     const research = addMetric(metrics, "Latest saved analysis", "No analysis yet");
     if (lastRun) {
-      const score = lastRun.score == null ? "Unscored" : lastRun.score + "/100";
-      const open = el("button", score + " · " + ranges[lastRun.horizon], "text-button");
+      const score = lastRun.score == null ? t("Unscored") : lastRun.score + "/100";
+      const open = el("button", score + " · " + t(ranges[lastRun.horizon]), "text-button");
       open.type = "button";
-      open.setAttribute("aria-label", "Open latest analysis for " + ticker + ", " + open.textContent);
+      open.setAttribute("aria-label", t("Open latest analysis for {ticker}, {result}", { ticker, result: open.textContent }));
       open.addEventListener("click", () => openAnalysis(lastRun));
       research.replaceChildren(open, el("small", eventDate.format(new Date(lastRun.createdAt))));
     }
     void loadClose(ticker).then(quote => {
-      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote?.date);
+      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote ? dateLabel(quote.date) : null);
       if (quote) setMetric(daily, signedPercent.format(quote.change), null, quote.change);
     });
     return row;
@@ -631,7 +774,7 @@ async function saveWatch(ticker, add, button) {
     if (version !== signedInVersion) return;
     saved = data.watchlist;
     changed = true;
-    notice(ticker + (add ? " added to your watchlist." : " removed from your watchlist."));
+    notice(add ? "{ticker} added to your watchlist." : "{ticker} removed from your watchlist.", false, { ticker });
   } catch (error) {
     if (version === signedInVersion) notice(error.message, true);
   } finally {
@@ -654,10 +797,10 @@ function openAnalysis(result) {
 }
 
 function renderHistory() {
-  const rows = history.map(result => listRow(result.ticker + " · " + ranges[result.horizon] + " · " + (result.score == null ? "Unscored" : result.score + "/100"),
-    (Number.isFinite(result.score) ? scoreOutlook(result.score).label + " · " : "")
+  const rows = history.map(result => listRow(result.ticker + " · " + t(ranges[result.horizon]) + " · " + (result.score == null ? t("Unscored") : result.score + "/100"),
+    (Number.isFinite(result.score) ? t(scoreOutlook(result.score).label) + " · " : "")
       + providerLabel(result.provider) + " · " + eventDate.format(new Date(result.createdAt)), "Open result", () => openAnalysis(result)));
-  $("history-items").replaceChildren(...(rows.length ? rows : [el("p", "Run an analysis to start your history.", "empty")]));
+  $("history-items").replaceChildren(...(rows.length ? rows : [el("p", t("Run an analysis to start your history."), "empty")]));
 }
 
 function prepareHolding(ticker = "") {
@@ -665,8 +808,14 @@ function prepareHolding(ticker = "") {
   $("holding-stock").value = ticker;
   $("holding-shares").value = holding?.shares ?? "";
   $("holding-cost").value = holding?.average_cost ?? "";
-  $("holding-form-title").textContent = holding ? "Edit " + ticker + " holding" : "Add a holding";
-  $("holding-save").textContent = holding ? "Save changes" : "Add holding";
+  updateHoldingLabels();
+}
+
+function updateHoldingLabels() {
+  const ticker = $("holding-stock").value;
+  const editing = holdings.some(item => item.ticker === ticker);
+  $("holding-form-title").textContent = editing ? t("Edit {ticker} holding", { ticker }) : t("Add a holding");
+  $("holding-save").textContent = t(editing ? "Save changes" : "Add holding");
   $("holding-cancel").hidden = !ticker;
 }
 
@@ -691,7 +840,7 @@ async function saveHolding(ticker, shares, averageCost, button) {
     holdings = data.portfolio;
     changed = true;
     if (shares || $("holding-stock").value === ticker) prepareHolding();
-    notice(ticker + (shares ? " holding saved." : " holding removed."));
+    notice(shares ? "{ticker} holding saved." : "{ticker} holding removed.", false, { ticker });
   } catch (error) {
     if (version === signedInVersion) notice(error.message, true);
   } finally {
@@ -723,10 +872,10 @@ function renderPortfolio() {
 
   const positions = holdings.map(({ ticker, shares, average_cost: cost }) => {
     const basis = shares * cost;
-    const { row, actions, metrics } = positionRow(ticker, shareCount.format(shares) + (Number(shares) === 1 ? " share" : " shares"));
-    actions.append(positionAction("Edit", "Edit " + ticker + " holding", () => openHolding(ticker)),
-      positionAction("Remove", "Remove " + ticker + " holding", event => {
-        if (holdingPending || !window.confirm("Remove " + ticker + " from your portfolio?")) return;
+    const { row, actions, metrics } = positionRow(ticker, t(Number(shares) === 1 ? "{count} share" : "{count} shares", { count: shareCount.format(shares) }));
+    actions.append(positionAction("Edit", t("Edit {ticker} holding", { ticker }), () => openHolding(ticker)),
+      positionAction("Remove", t("Remove {ticker} holding", { ticker }), event => {
+        if (holdingPending || !window.confirm(t("Remove {ticker} from your portfolio?", { ticker }))) return;
         void saveHolding(ticker, 0, 0, event.currentTarget);
       }));
     addMetric(metrics, "Average cost", money.format(cost));
@@ -735,7 +884,7 @@ function renderPortfolio() {
     const value = addMetric(metrics, "Market value");
     const gain = addMetric(metrics, "Unrealized gain or loss");
     const valuation = loadClose(ticker).then(quote => {
-      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote?.date);
+      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote ? dateLabel(quote.date) : null);
       if (!quote) return null;
       const current = quote.price * shares;
       const pnl = current - basis;
@@ -751,7 +900,7 @@ function renderPortfolio() {
     const priced = values.filter(Boolean);
     if (!priced.length) {
       setMetric(marketValue, "Unavailable");
-      coverage.textContent = "Closing prices are unavailable for all holdings.";
+      coverage.textContent = t("Closing prices are unavailable for all holdings.");
       return;
     }
     const current = priced.reduce((sum, item) => sum + item.current, 0);
@@ -759,8 +908,8 @@ function renderPortfolio() {
     setMetric(marketValue, money.format(current));
     setMetric(gain, signedMoney.format(current - basis), signedPercent.format((current - basis) / basis), current - basis);
     coverage.textContent = priced.length === count
-      ? (config.marketMode === "demo" ? "Based on synthetic closes." : "Based on the latest available closing prices.")
-      : "Market value and gain or loss cover " + priced.length + " of " + count + " holdings with available prices.";
+      ? t(config.marketMode === "demo" ? "Based on synthetic closes." : "Based on the latest available closing prices.")
+      : t("Market value and gain or loss cover {priced} of {total} holdings with available prices.", { priced: priced.length, total: count });
   });
 }
 
@@ -886,7 +1035,7 @@ $("analysis-form").addEventListener("submit", async event => {
     }
     if (!$("history").hidden) renderHistory();
     if (!$("watchlist").hidden) renderWatchlist();
-    if (stock?.ticker !== ticker || $("research").hidden) notice(ticker + " analysis saved to history.");
+    if (stock?.ticker !== ticker || $("research").hidden) notice("{ticker} analysis saved to history.", false, { ticker });
   } catch (error) { if (currentUser === signedInVersion) notice(error.message, true); }
   finally {
     button.removeAttribute("aria-busy");
@@ -895,12 +1044,76 @@ $("analysis-form").addEventListener("submit", async event => {
 });
 new ResizeObserver(drawChart).observe($("chart").parentElement);
 
-$("score-scale").replaceChildren(...outlookBands.map((band, index) => {
-  const max = index === 0 ? 100 : outlookBands[index - 1].min - 1;
-  const item = el("li", band.min + "–" + max + " " + band.label);
-  item.dataset.outlook = band.tone;
-  return item;
-}));
+function renderScoreScale() {
+  $("score-scale").replaceChildren(...outlookBands.map((band, index) => {
+    const max = index === 0 ? 100 : outlookBands[index - 1].min - 1;
+    const item = el("li", band.min + "–" + max + " " + t(band.label));
+    item.dataset.outlook = band.tone;
+    return item;
+  }));
+}
+
+function renderDataState() {
+  const dataState = $("data-state");
+  const demo = config.marketMode === "demo";
+  dataState.textContent = t(demo ? "Synthetic demo data" : "Real market data");
+  dataState.title = t(demo ? "Sample prices and filings for demonstration"
+    : "Daily closes from Twelve Data and company filings from SEC EDGAR");
+  dataState.hidden = false;
+}
+
+function providerOptionLabel(provider) {
+  return t(provider.label) + (provider.enabled ? "" : " · " + t("setup required"));
+}
+
+function applyLanguage(next) {
+  language = next;
+  ({ money, signedMoney, signedPercent, shareCount, decimal, calendar, quoteDate, eventDate } = formatters(language));
+  document.documentElement.lang = language;
+  for (const [node, message] of staticCopy) node.textContent = t(message);
+  for (const [node, attr, message] of staticAttributes) node.setAttribute(attr, t(message));
+  for (const button of languageButtons) button.setAttribute("aria-pressed", String(button.dataset.language === language));
+  renderNotice();
+  renderScoreScale();
+  const view = $("workspace").hidden ? "research" : document.querySelector(".view:not([hidden])").id;
+  renderViewTitle(view);
+  if (!config) return;
+
+  renderDataState();
+  renderMarketOverview();
+  authControls();
+  updateHoldingLabels();
+  for (const option of $("provider").options) {
+    const provider = config.providers.find(item => item.id === option.value);
+    option.textContent = providerOptionLabel(provider);
+  }
+  if (!user || $("workspace").hidden) return;
+
+  renderAccountName();
+  openView(view);
+  showAgentPreview();
+  if (stock) {
+    renderStockSector();
+    renderMarketQuote();
+    updateStockActions();
+  }
+  if (!$("search-results").hidden) renderSearch();
+  if (displayedResult) {
+    const expanded = [...$("agent-results").querySelectorAll("details")].map(item => item.open);
+    renderResult(displayedResult);
+    $("agent-results").querySelectorAll("details").forEach((item, index) => { item.open = Boolean(expanded[index]); });
+  }
+}
+
+for (const button of languageButtons) {
+  button.addEventListener("click", () => {
+    const next = button.dataset.language;
+    if (next === language) return;
+    try { localStorage.setItem(languageKey, next); } catch { /* The current page can still switch languages. */ }
+    applyLanguage(next);
+  });
+}
+applyLanguage(language);
 
 const emailReturn = new URLSearchParams(location.hash.slice(1));
 const emailConfirmed = emailReturn.get("type") === "signup" && emailReturn.has("access_token");
@@ -911,17 +1124,12 @@ if (emailConfirmed || confirmationExpired) {
 
 try {
   config = await api("/api/config");
-  const dataState = $("data-state");
-  const demoMode = config.marketMode === "demo";
-  dataState.textContent = demoMode ? "Synthetic demo data" : "Real market data";
-  dataState.title = demoMode ? "Sample prices and filings for demonstration"
-    : "Daily closes from Twelve Data and company filings from SEC EDGAR";
-  dataState.hidden = false;
+  renderDataState();
   for (const stock of config.stocks) {
     $("holding-stock").append(stockOption(stock.ticker, stock.ticker + " · " + stock.name));
   }
   for (const provider of config.providers) {
-    const option = el("option", provider.label + (provider.enabled ? "" : " · setup required"));
+    const option = el("option", providerOptionLabel(provider));
     option.value = provider.id;
     option.disabled = !provider.enabled || (provider.id === "demo" && config.marketMode === "live");
     if (provider.model) option.title = provider.model;
