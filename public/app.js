@@ -1139,9 +1139,10 @@ try {
     $("holding-stock").append(stockOption(stock.ticker, stock.ticker + " · " + stock.name));
   }
   for (const provider of config.providers) {
+    if (provider.id === "demo" && config.marketMode === "live") continue;
     const option = el("option", providerOptionLabel(provider));
     option.value = provider.id;
-    option.disabled = !provider.enabled || (provider.id === "demo" && config.marketMode === "live");
+    option.disabled = !provider.enabled;
     if (provider.model) option.title = provider.model;
     $("provider").append(option);
   }
