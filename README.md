@@ -26,7 +26,7 @@ node --env-file-if-exists=.env src/server.mjs
 
 Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo needs no accounts, packages, or API keys. It uses synthetic closing prices, financial numbers, and filing excerpts. The same browser session can reopen watchlists, manual positions, analysis preferences, and results stored in local SQLite.
 
-Try searching for **MU**, saving it, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources to read the evidence. Open **Analysis history** to retrieve the saved result, or use **Portfolio** to enter shares and an average cost in USD.
+Try searching for **MU**, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources to read the evidence. **Analysis history** saves completed runs. Use **Add to watchlist** from the stock card or result to follow its closing price and reopen the latest analysis. Use **Add holding** to enter shares you own and the average cost per share in USD. The **Portfolio** shows cost basis, market value, and unrealized gain or loss.
 
 ## Connect a dedicated Supabase project
 

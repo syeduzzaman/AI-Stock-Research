@@ -4,6 +4,8 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 const signedPercent = new Intl.NumberFormat("en-US", {
   style: "percent", signDisplay: "exceptZero", minimumFractionDigits: 2, maximumFractionDigits: 2
 });
+const signedMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", signDisplay: "exceptZero" });
+const shareCount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
 const calendar = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const eventDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 const defaults = { horizon: "1m", provider: "demo", agentCount: 5 };
@@ -19,6 +21,9 @@ let signedInVersion = 0;
 let saved = [];
 let holdings = [];
 let history = [];
+let watchPending = false;
+let holdingPending = false;
+const closingQuotes = new Map();
 
 function el(tag, text, className) {
   const item = document.createElement(tag);
@@ -86,13 +91,14 @@ function updateAnalysisControls() {
 
 const viewTitles = {
   research: ["AI Stock Research", "Run independent analyses and follow the evidence behind each score."],
-  watchlist: ["Watchlist", "Open the stocks you’ve saved for research."],
-  portfolio: ["Portfolio", "Track your shares, cost basis, and value at the latest available close."],
+  watchlist: ["Watchlist", "Follow stocks you’re interested in and revisit your latest research."],
+  portfolio: ["Portfolio", "Enter the shares you own to track their value and unrealized gain or loss."],
   history: ["Analysis history", "Reopen scores, explanations, and the evidence from previous runs."]
 };
 
 function openView(view) {
-  if (!user) return;
+  if (!user || $("workspace").hidden) return;
+  const changedView = $(view).hidden;
   const [title, description] = viewTitles[view];
   $("view-title").textContent = title;
   $("view-description").textContent = description;
@@ -106,6 +112,13 @@ function openView(view) {
   if (view === "portfolio") renderPortfolio();
   if (view === "history") renderHistory();
   if (view === "research") requestAnimationFrame(drawChart);
+  if (changedView) window.scrollTo(0, 0);
+}
+
+function openResearch(ticker) {
+  if ($("workspace").hidden) return;
+  openView("research");
+  void chooseStock(ticker);
 }
 
 function renderMarketOverview() {
@@ -119,10 +132,7 @@ function renderMarketOverview() {
     const tile = el(user ? "button" : "article", undefined, "market-tile");
     if (user) {
       tile.type = "button";
-      tile.addEventListener("click", () => {
-        openView("research");
-        chooseStock(ticker);
-      });
+      tile.addEventListener("click", () => openResearch(ticker));
     }
 
     const identity = el("div", undefined, "market-tile-identity");
@@ -230,13 +240,19 @@ function authControls() {
 }
 
 async function showAccount(account) {
-  signedInVersion += 1;
+  const version = ++signedInVersion;
+  marketRequest += 1;
+  closingQuotes.clear();
+  watchPending = false;
+  holdingPending = false;
+  $("holding-fields").disabled = false;
+  $("holding-save").disabled = false;
   user = account;
   void loadMarketOverview();
   $("result-panel").hidden = true;
   $("account-area").hidden = !user;
   $("account-panel").hidden = Boolean(user);
-  $("workspace").hidden = !user;
+  $("workspace").hidden = true;
   if (!user) {
     saved = [];
     holdings = [];
@@ -245,21 +261,22 @@ async function showAccount(account) {
     $("history-items").replaceChildren();
     $("watch-items").replaceChildren();
     $("holding-items").replaceChildren();
-    $("holding-form").reset();
+    prepareHolding();
     authControls();
     return;
   }
   const label = user.username ?? user.email ?? "Demo workspace";
   $("account-name").textContent = label;
   $("account-initials").textContent = label[0].toUpperCase();
-  const initialMarketRequest = marketRequest;
   const data = await api("/api/workspace");
+  if (version !== signedInVersion) return;
   saved = data.watchlist;
   holdings = data.portfolio;
   history = data.history;
   selectSettings(data.preferences);
+  $("workspace").hidden = false;
   openView("research");
-  if (marketRequest === initialMarketRequest) await chooseStock(saved[0] ?? config.stocks[0].ticker);
+  await chooseStock(saved[0] ?? config.stocks[0].ticker);
 }
 
 function renderSearch() {
@@ -291,14 +308,24 @@ async function chooseStock(ticker, keepResult = false) {
   $("stock-name").textContent = stock.name;
   $("stock-logo").textContent = stock.ticker.slice(0, 1);
   $("stock-symbol").textContent = stock.ticker + " · " + stock.sector;
-  watchState();
+  updateStockActions();
   await loadMarket();
 }
 
-function watchState() {
-  const isSaved = saved.includes(stock?.ticker);
-  $("watch-toggle").setAttribute("aria-pressed", String(isSaved));
-  $("watch-toggle").textContent = isSaved ? "★ Saved" : "☆ Save stock";
+function updateStockActions() {
+  const ticker = stock?.ticker;
+  const isSaved = saved.includes(ticker);
+  const hasHolding = holdings.some(item => item.ticker === ticker);
+  for (const id of ["watch-toggle", "result-watch"]) {
+    const button = $(id);
+    button.setAttribute("aria-pressed", String(isSaved));
+    button.textContent = isSaved ? "★ On watchlist" : "☆ Add to watchlist";
+    button.disabled = !ticker || watchPending;
+  }
+  for (const id of ["stock-holding", "result-holding"]) {
+    $(id).textContent = hasHolding ? "Edit holding" : "Add holding";
+    $(id).disabled = !ticker || holdingPending;
+  }
 }
 
 async function loadMarket() {
@@ -484,63 +511,257 @@ function listRow(title, sub, action, onClick) {
   return row;
 }
 
+function loadClose(ticker) {
+  const cached = closingQuotes.get(ticker);
+  if (cached && cached.expires > Date.now()) return cached.request;
+  const request = api("/api/market?" + new URLSearchParams({ ticker, horizon: "1w" }))
+    .then(({ prices }) => {
+      const previous = prices.at(-2);
+      const latest = prices.at(-1);
+      return { price: latest.close, date: latest.date, change: latest.close / previous.close - 1 };
+    }).catch(() => {
+      if (closingQuotes.get(ticker)?.request === request) closingQuotes.delete(ticker);
+      return null;
+    });
+  closingQuotes.set(ticker, { request, expires: Date.now() + 60_000 });
+  return request;
+}
+
+function positionAction(text, label, onClick) {
+  const button = el("button", text, "secondary");
+  button.type = "button";
+  button.setAttribute("aria-label", label);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function positionRow(ticker, subtitle) {
+  const name = config.stocks.find(item => item.ticker === ticker)?.name;
+  const row = el("article", undefined, "card position-row");
+  const heading = el("header", undefined, "position-heading");
+  const identity = el("div");
+  identity.append(el("h3", name ? ticker + " · " + name : ticker), el("p", subtitle));
+  const actions = el("div", undefined, "row-actions");
+  actions.append(positionAction("Research", "Research " + ticker, () => openResearch(ticker)));
+  const metrics = el("dl", undefined, "position-metrics");
+  heading.append(identity, actions);
+  row.append(heading, metrics);
+  return { row, actions, metrics };
+}
+
+function addMetric(group, label, initial = "—") {
+  const term = el("div");
+  const value = el("dd", initial);
+  term.append(el("dt", label), value);
+  group.append(term);
+  return value;
+}
+
+function setMetric(node, value, detail, change) {
+  node.textContent = value;
+  if (detail) node.append(el("small", detail));
+  if (change) node.dataset.direction = change < 0 ? "down" : "up";
+}
+
+function emptyPosition(title, description) {
+  const card = el("div", undefined, "card position-empty");
+  card.append(el("h3", title), el("p", description));
+  return card;
+}
+
+function stockOption(value, label) {
+  const option = el("option", label);
+  option.value = value;
+  return option;
+}
+
 function renderWatchlist() {
-  const rows = saved.map(ticker => config.stocks.find(item => item.ticker === ticker)).filter(Boolean);
-  $("watch-items").replaceChildren(...(rows.length ? rows.map(item => listRow(item.ticker + " · " + item.name, item.sector, "Research", () => {
-    openView("research");
-    chooseStock(item.ticker);
-  })) : [el("p", "Save a stock from Research to find it here.", "empty")]));
+  const picker = $("watch-stock");
+  const selection = picker.value;
+  const available = config.stocks.filter(item => !saved.includes(item.ticker));
+  picker.replaceChildren(stockOption("", "Choose a stock"), ...available.map(item => stockOption(item.ticker, item.ticker + " · " + item.name)));
+  if (available.some(item => item.ticker === selection)) picker.value = selection;
+  $("watch-form").hidden = !available.length;
+  $("watch-all").hidden = Boolean(available.length);
+  updateWatchPicker();
+
+  const rows = saved.map(ticker => {
+    const item = config.stocks.find(item => item.ticker === ticker);
+    const { row, actions, metrics } = positionRow(ticker, item?.sector ?? "Saved stock");
+    actions.append(positionAction("Remove", "Remove " + ticker + " from watchlist", event => {
+      void saveWatch(ticker, false, event.currentTarget);
+    }));
+    const close = addMetric(metrics, "Latest close", "Loading…");
+    const daily = addMetric(metrics, "1-day change");
+    const lastRun = history.find(item => item.ticker === ticker);
+    const research = addMetric(metrics, "Latest saved analysis", "No analysis yet");
+    if (lastRun) {
+      const score = lastRun.score == null ? "Unscored" : lastRun.score + "/100";
+      const open = el("button", score + " · " + ranges[lastRun.horizon], "text-button");
+      open.type = "button";
+      open.setAttribute("aria-label", "Open latest analysis for " + ticker + ", " + open.textContent);
+      open.addEventListener("click", () => openAnalysis(lastRun));
+      research.replaceChildren(open, el("small", eventDate.format(new Date(lastRun.createdAt))));
+    }
+    void loadClose(ticker).then(quote => {
+      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote?.date);
+      if (quote) setMetric(daily, signedPercent.format(quote.change), null, quote.change);
+    });
+    return row;
+  });
+  $("watch-items").replaceChildren(...(rows.length ? rows : [emptyPosition("No stocks on your watchlist",
+    "Choose a stock above, or add it while you’re viewing its chart or analysis.")]));
+}
+
+function updateWatchPicker() {
+  $("watch-stock").disabled = watchPending;
+  $("watch-add").disabled = watchPending || !$("watch-stock").value;
+}
+
+async function saveWatch(ticker, add, button) {
+  if (!ticker || watchPending) return;
+  const version = signedInVersion;
+  watchPending = true;
+  button.disabled = true;
+  updateStockActions();
+  updateWatchPicker();
+  let changed = false;
+  try {
+    const data = await api("/api/watchlist", "PUT", { ticker, add });
+    if (version !== signedInVersion) return;
+    saved = data.watchlist;
+    changed = true;
+    notice(ticker + (add ? " added to your watchlist." : " removed from your watchlist."));
+  } catch (error) {
+    if (version === signedInVersion) notice(error.message, true);
+  } finally {
+    if (version === signedInVersion) {
+      watchPending = false;
+      button.disabled = false;
+      updateStockActions();
+      if (changed && !$("watchlist").hidden) renderWatchlist();
+      else updateWatchPicker();
+    }
+  }
+}
+
+function openAnalysis(result) {
+  selectSettings({ provider: result.provider, horizon: result.horizon, agentCount: result.agentCount });
+  openView("research");
+  void chooseStock(result.ticker, true);
+  renderResult(result);
+  $("result-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderHistory() {
   const rows = history.map(result => listRow(result.ticker + " · " + ranges[result.horizon] + " · " + (result.score == null ? "Unscored" : result.score + "/100"),
     (Number.isFinite(result.score) ? scoreOutlook(result.score).label + " · " : "")
-      + providerLabel(result.provider) + " · " + eventDate.format(new Date(result.createdAt)), "Open result", () => {
-      selectSettings({ provider: result.provider, horizon: result.horizon, agentCount: result.agentCount });
-      openView("research");
-      chooseStock(result.ticker, true);
-      renderResult(result);
-      $("result-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }));
+      + providerLabel(result.provider) + " · " + eventDate.format(new Date(result.createdAt)), "Open result", () => openAnalysis(result)));
   $("history-items").replaceChildren(...(rows.length ? rows : [el("p", "Run an analysis to start your history.", "empty")]));
 }
 
-async function saveHolding(ticker, shares, averageCost) {
-  holdings = (await api("/api/holdings", "PUT", { ticker, shares, averageCost })).portfolio;
-  renderPortfolio();
+function prepareHolding(ticker = "") {
+  const holding = holdings.find(item => item.ticker === ticker);
+  $("holding-stock").value = ticker;
+  $("holding-shares").value = holding?.shares ?? "";
+  $("holding-cost").value = holding?.average_cost ?? "";
+  $("holding-form-title").textContent = holding ? "Edit " + ticker + " holding" : "Add a holding";
+  $("holding-save").textContent = holding ? "Save changes" : "Add holding";
+  $("holding-cancel").hidden = !ticker;
+}
+
+function openHolding(ticker) {
+  if (holdingPending) return;
+  openView("portfolio");
+  prepareHolding(ticker);
+  $("holding-shares").focus();
+}
+
+async function saveHolding(ticker, shares, averageCost, button) {
+  if (holdingPending) return;
+  const version = signedInVersion;
+  holdingPending = true;
+  button.disabled = true;
+  $("holding-fields").disabled = true;
+  updateStockActions();
+  let changed = false;
+  try {
+    const data = await api("/api/holdings", "PUT", { ticker, shares, averageCost });
+    if (version !== signedInVersion) return;
+    holdings = data.portfolio;
+    changed = true;
+    if (shares || $("holding-stock").value === ticker) prepareHolding();
+    notice(ticker + (shares ? " holding saved." : " holding removed."));
+  } catch (error) {
+    if (version === signedInVersion) notice(error.message, true);
+  } finally {
+    if (version === signedInVersion) {
+      holdingPending = false;
+      button.disabled = false;
+      $("holding-fields").disabled = false;
+      updateStockActions();
+      if (changed && !$("portfolio").hidden) renderPortfolio();
+    }
+  }
 }
 
 function renderPortfolio() {
-  const rows = holdings.map(({ ticker, shares, average_cost: cost }) => {
-    const item = config.stocks.find(candidate => candidate.ticker === ticker);
-    const row = listRow(item ? ticker + " · " + item.name : ticker, shares + " shares · Average cost " + money.format(cost), "Edit", () => {
-      $("holding-stock").value = ticker;
-      $("holding-shares").value = shares;
-      $("holding-cost").value = cost;
-      $("holding-shares").focus();
+  const totals = $("portfolio-totals");
+  const coverage = $("portfolio-coverage");
+  totals.replaceChildren();
+  coverage.textContent = "";
+  $("portfolio-overview").hidden = !holdings.length;
+  if (!holdings.length) {
+    $("holding-items").replaceChildren(emptyPosition("No holdings yet", "Add a stock you own with the number of shares and what you paid per share."));
+    return;
+  }
+  const count = holdings.length;
+  const costTotal = holdings.reduce((sum, item) => sum + item.shares * item.average_cost, 0);
+  addMetric(totals, "Total cost basis", money.format(costTotal));
+  const marketValue = addMetric(totals, "Market value", "Loading…");
+  const gain = addMetric(totals, "Unrealized gain or loss");
+
+  const positions = holdings.map(({ ticker, shares, average_cost: cost }) => {
+    const basis = shares * cost;
+    const { row, actions, metrics } = positionRow(ticker, shareCount.format(shares) + (Number(shares) === 1 ? " share" : " shares"));
+    actions.append(positionAction("Edit", "Edit " + ticker + " holding", () => openHolding(ticker)),
+      positionAction("Remove", "Remove " + ticker + " holding", event => {
+        if (holdingPending || !window.confirm("Remove " + ticker + " from your portfolio?")) return;
+        void saveHolding(ticker, 0, 0, event.currentTarget);
+      }));
+    addMetric(metrics, "Average cost", money.format(cost));
+    addMetric(metrics, "Cost basis", money.format(basis));
+    const close = addMetric(metrics, "Latest close", "Loading…");
+    const value = addMetric(metrics, "Market value");
+    const gain = addMetric(metrics, "Unrealized gain or loss");
+    const valuation = loadClose(ticker).then(quote => {
+      setMetric(close, quote ? money.format(quote.price) : "Unavailable", quote?.date);
+      if (!quote) return null;
+      const current = quote.price * shares;
+      const pnl = current - basis;
+      setMetric(value, money.format(current));
+      setMetric(gain, signedMoney.format(pnl), signedPercent.format(pnl / basis), pnl);
+      return { current, basis };
     });
-    const edit = row.lastElementChild;
-    const value = el("p", "Loading close…", "holding-value");
-    row.firstElementChild.append(value);
-    const actions = el("div", undefined, "row-actions");
-    const remove = el("button", "Remove", "secondary");
-    remove.type = "button";
-    remove.setAttribute("aria-label", "Remove " + ticker + " holding");
-    remove.addEventListener("click", async () => {
-      remove.disabled = true;
-      try { await saveHolding(ticker, 0, 0); }
-      catch (error) { notice(error.message, true); remove.disabled = false; }
-    });
-    actions.append(edit, remove);
-    row.append(actions);
-    api("/api/market?" + new URLSearchParams({ ticker, horizon: "1w" })).then(({ metrics, marketMode }) => {
-      const pnl = (metrics.last - Number(cost)) * Number(shares);
-      value.textContent = money.format(metrics.last * Number(shares)) + " value · " + (pnl >= 0 ? "+" : "") + money.format(pnl)
-        + " unrealized P/L · " + (marketMode === "demo" ? "Synthetic close " : "Close ") + metrics.asOf;
-    }).catch(() => { value.textContent = "Closing price unavailable."; });
-    return row;
+    return { row, valuation };
   });
-  $("holding-items").replaceChildren(...(rows.length ? rows : [el("p", "Add a holding to see its value and unrealized gain or loss.", "empty")]));
+  $("holding-items").replaceChildren(...positions.map(({ row }) => row));
+  void Promise.all(positions.map(({ valuation }) => valuation)).then(values => {
+    if (!marketValue.isConnected) return;
+    const priced = values.filter(Boolean);
+    if (!priced.length) {
+      setMetric(marketValue, "Unavailable");
+      coverage.textContent = "Closing prices are unavailable for all holdings.";
+      return;
+    }
+    const current = priced.reduce((sum, item) => sum + item.current, 0);
+    const basis = priced.reduce((sum, item) => sum + item.basis, 0);
+    setMetric(marketValue, money.format(current));
+    setMetric(gain, signedMoney.format(current - basis), signedPercent.format((current - basis) / basis), current - basis);
+    coverage.textContent = priced.length === count
+      ? (config.marketMode === "demo" ? "Based on synthetic closes." : "Based on the latest available closing prices.")
+      : "Market value and gain or loss cover " + priced.length + " of " + count + " holdings with available prices.";
+  });
 }
 
 $("auth-switch").addEventListener("click", () => {
@@ -614,14 +835,19 @@ $("stock-search").addEventListener("keydown", event => {
 document.addEventListener("pointerdown", event => {
   if (!event.target.closest(".stock-search")) $("search-results").hidden = true;
 });
-$("watch-toggle").addEventListener("click", async () => {
-  const ticker = stock.ticker;
-  $("watch-toggle").disabled = true;
-  try {
-    saved = (await api("/api/watchlist", "PUT", { ticker, add: !saved.includes(ticker) })).watchlist;
-    watchState();
-  } catch (error) { notice(error.message, true); }
-  finally { $("watch-toggle").disabled = false; }
+for (const id of ["watch-toggle", "result-watch"]) {
+  $(id).addEventListener("click", event => {
+    const ticker = stock?.ticker;
+    void saveWatch(ticker, !saved.includes(ticker), event.currentTarget);
+  });
+}
+for (const id of ["stock-holding", "result-holding"]) {
+  $(id).addEventListener("click", () => openHolding(stock.ticker));
+}
+$("watch-stock").addEventListener("change", updateWatchPicker);
+$("watch-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void saveWatch($("watch-stock").value, true, $("watch-add"));
 });
 $("analysis-form").addEventListener("change", event => {
   showAgentPreview();
@@ -633,17 +859,14 @@ $("save-pref").addEventListener("click", async () => {
     notice("Analysis defaults saved.");
   } catch (error) { notice(error.message, true); }
 });
-$("holding-form").addEventListener("submit", async event => {
+$("holding-stock").addEventListener("change", event => prepareHolding(event.target.value));
+$("holding-cancel").addEventListener("click", () => {
+  prepareHolding();
+  $("holding-stock").focus();
+});
+$("holding-form").addEventListener("submit", event => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector("button");
-  button.disabled = true;
-  try {
-    await saveHolding($("holding-stock").value, $("holding-shares").valueAsNumber, $("holding-cost").valueAsNumber);
-    form.reset();
-    notice("Holding saved.");
-  } catch (error) { notice(error.message, true); }
-  finally { button.disabled = false; }
+  void saveHolding($("holding-stock").value, $("holding-shares").valueAsNumber, $("holding-cost").valueAsNumber, $("holding-save"));
 });
 $("analysis-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -662,6 +885,7 @@ $("analysis-form").addEventListener("submit", async event => {
       if (!$("research").hidden) $("result-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
     if (!$("history").hidden) renderHistory();
+    if (!$("watchlist").hidden) renderWatchlist();
     if (stock?.ticker !== ticker || $("research").hidden) notice(ticker + " analysis saved to history.");
   } catch (error) { if (currentUser === signedInVersion) notice(error.message, true); }
   finally {
@@ -694,9 +918,7 @@ try {
     : "Daily closes from Twelve Data and company filings from SEC EDGAR";
   dataState.hidden = false;
   for (const stock of config.stocks) {
-    const option = el("option", stock.ticker + " · " + stock.name);
-    option.value = stock.ticker;
-    $("holding-stock").append(option);
+    $("holding-stock").append(stockOption(stock.ticker, stock.ticker + " · " + stock.name));
   }
   for (const provider of config.providers) {
     const option = el("option", provider.label + (provider.enabled ? "" : " · setup required"));

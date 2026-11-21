@@ -72,7 +72,10 @@
               </div>
               <div class="stock-header">
                 <div class="stock-identity"><span id="stock-logo" class="stock-logo" aria-hidden="true">N</span><div><h2 id="stock-name"></h2><p id="stock-symbol"></p></div></div>
-                <button class="secondary save" id="watch-toggle" type="button" aria-pressed="false">☆ Save stock</button>
+                <div class="stock-actions" aria-label="Research stock actions" role="group">
+                  <button class="secondary" id="watch-toggle" type="button" aria-pressed="false">☆ Add to watchlist</button>
+                  <button class="secondary" id="stock-holding" type="button">Add holding</button>
+                </div>
               </div>
               <div class="quote"><strong id="price">—</strong><span id="change"></span></div>
               <p class="market-date" id="market-date"></p>
@@ -108,6 +111,10 @@
                 <p id="result-explanation" class="result-explanation"></p>
               </div>
               <div id="result-score" class="result-score"></div>
+              <div class="stock-actions result-actions" role="group" aria-label="Analyzed stock actions">
+                <button class="secondary" id="result-watch" type="button" aria-pressed="false">☆ Add to watchlist</button>
+                <button class="secondary" id="result-holding" type="button">Add holding</button>
+              </div>
               <details class="score-guide">
                 <summary>How to read the score</summary>
                 <p>The overall score averages the agents with usable results. The scale describes how the evidence leans over the selected time horizon.</p>
@@ -117,15 +124,39 @@
             <div id="agent-results" class="agent-results"></div>
           </section>
         </section>
-        <section id="watchlist" class="view card table-card" aria-labelledby="view-title" hidden><div id="watch-items"></div></section>
-        <section id="portfolio" class="view card table-card" aria-labelledby="view-title" hidden>
-          <form id="holding-form" class="holding-form">
-            <label>Stock<select id="holding-stock" required></select></label>
-            <label>Shares<input id="holding-shares" type="number" min=".000001" max="10000000" step=".000001" required></label>
-            <label>Average cost (USD)<input id="holding-cost" type="number" min=".000001" max="10000000" step=".000001" required></label>
-            <button class="primary" type="submit">Save holding</button>
-          </form>
-          <div id="holding-items"></div>
+        <section id="watchlist" class="view workspace-list" aria-labelledby="view-title" hidden>
+          <article class="card workspace-editor">
+            <h2>Add to watchlist</h2>
+            <form id="watch-form" class="watch-form">
+              <label for="watch-stock">Stock</label>
+              <select id="watch-stock" required></select>
+              <button class="primary" id="watch-add" type="submit">Add stock</button>
+            </form>
+            <p class="empty" id="watch-all" hidden>All covered stocks are already on your watchlist.</p>
+          </article>
+          <div id="watch-items" class="position-list"></div>
+        </section>
+        <section id="portfolio" class="view workspace-list" aria-labelledby="view-title" hidden>
+          <section class="card portfolio-overview" id="portfolio-overview" aria-labelledby="portfolio-title" hidden>
+            <h2 id="portfolio-title">Portfolio overview</h2>
+            <dl class="position-metrics" id="portfolio-totals"></dl>
+            <p id="portfolio-coverage" class="empty" role="status"></p>
+          </section>
+          <article class="card workspace-editor">
+            <h2 id="holding-form-title">Add a holding</h2>
+            <form id="holding-form" aria-labelledby="holding-form-title">
+              <fieldset id="holding-fields" class="holding-form">
+                <label>Stock<select id="holding-stock" required><option value="">Choose a stock</option></select></label>
+                <label>Shares<input id="holding-shares" type="number" min=".000001" max="10000000" step=".000001" required></label>
+                <label>Average cost per share (USD)<input id="holding-cost" type="number" min=".000001" max="10000000" step=".000001" required></label>
+                <div class="row-actions">
+                  <button class="text-button" id="holding-cancel" type="button" hidden>Cancel</button>
+                  <button class="primary" id="holding-save" type="submit">Add holding</button>
+                </div>
+              </fieldset>
+            </form>
+          </article>
+          <div id="holding-items" class="position-list"></div>
         </section>
         <section id="history" class="view card table-card" aria-labelledby="view-title" hidden><div id="history-items"></div></section>
       </div>
