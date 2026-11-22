@@ -111,10 +111,9 @@ export function Watchlist({ api, config, watchlist, history, openStock, openResu
   return <section className="view workspace-list" aria-labelledby="view-title">
     <article className="card workspace-editor">
       <h2>{t("Add to watchlist")}</h2>
-      {available.length ? <form className="watch-form" onSubmit={event => {
+      {available.length ? <form className="watch-form" onSubmit={async event => {
         event.preventDefault();
-        if (selection) updateWatch(selection, true);
-        setSelected("");
+        if (selection && await updateWatch(selection, true)) setSelected("");
       }}>
         <label htmlFor="watch-stock">{t("Stock")}</label>
         <select id="watch-stock" required value={selection} disabled={busy} onChange={event => setSelected(event.target.value)}>

@@ -6,9 +6,13 @@ export async function request(path, { method = "GET", input, signal } = {}) {
     headers: input === undefined ? undefined : { "Content-Type": "application/json" },
     body: input === undefined ? undefined : JSON.stringify(input),
   });
-  const data = await response.json();
-  if (!response.ok) {
-    const error = new Error(data.error || "The request could not be completed.");
+  const data = await response.json().catch(error => {
+    if (error.name !== "SyntaxError") throw error;
+    return null;
+  });
+  if (!response.ok || !data || typeof data !== "object" || Array.isArray(data)) {
+    const message = typeof data?.error === "string" ? data.error : null;
+    const error = new Error(message || "The request could not be completed.");
     error.status = response.status;
     throw error;
   }

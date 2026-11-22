@@ -153,10 +153,14 @@ export function AnalysisResult({ result, history, providers, actions, onOpen }) 
   const worst = scored.at(-1);
 
   useEffect(() => {
-    ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const result = ref.current;
+    if (!result) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    result.scrollIntoView({ behavior: reducedMotion ? "instant" : "smooth", block: "nearest" });
+    result.focus({ preventScroll: true });
   }, [result.id]);
 
-  return <section ref={ref} className="results" aria-labelledby="result-title">
+  return <section ref={ref} className="results" aria-labelledby="result-title" tabIndex={-1}>
     <header className="card result-summary" data-outlook={tone}>
       <div>
         <h2 id="result-title">{t("{ticker} · {range} outlook", { ticker: result.ticker, range: t(ranges[result.horizon]) })}</h2>

@@ -27,7 +27,6 @@ export function LanguageProvider({ children }) {
       signedPercent: number({ style: "percent", signDisplay: "exceptZero", maximumFractionDigits: 2 }),
       shareCount: number({ maximumFractionDigits: 6 }), decimal: number({ maximumFractionDigits: 2 }),
       dateLabel: value => date({ dateStyle: "medium", timeZone: "UTC" }).format(new Date(value)),
-      calendar: date({ month: "short", day: "numeric", timeZone: "UTC" }),
       runDate: date({ dateStyle: "medium", timeStyle: "short" }),
     };
   }, [language]);

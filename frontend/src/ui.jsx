@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useLanguage } from "./language.jsx";
 
 export const ranges = { "1w": "1 week", "1m": "1 month", "3m": "3 months", "6m": "6 months" };
@@ -36,7 +36,13 @@ export function StockOptions({ stocks }) {
 
 export function PriceChart({ prices, negative, label, sparkline = false }) {
   const ref = useRef(null);
-  const { money } = useLanguage();
+  const plot = useRef(null);
+  const id = useId();
+  const { t, money, dateLabel } = useLanguage();
+  const [cursor, setCursor] = useState(null);
+  const index = Math.min(cursor ?? Infinity, (prices?.length ?? 0) - 1);
+  const point = prices?.[index];
+  const pointLabel = point ? dateLabel(point.date) + " · " + money.format(point.close) : "";
   useEffect(() => {
     const canvas = ref.current;
     const draw = () => {
@@ -58,6 +64,7 @@ export function PriceChart({ prices, negative, label, sparkline = false }) {
       const right = sparkline ? width - margin : width - Math.max(61, ctx.measureText(money.format(low + spread)).width + 12);
       const x = index => margin + (right - margin) * index / Math.max(1, closes.length - 1);
       const y = price => height - margin - (price - low) / spread * (height - 2 * margin);
+      plot.current = { left: margin, right };
 
       if (!sparkline) {
         ctx.strokeStyle = palette.getPropertyValue("--line").trim();
@@ -90,14 +97,51 @@ export function PriceChart({ prices, negative, label, sparkline = false }) {
       ctx.strokeStyle = color;
       ctx.lineWidth = sparkline ? 1.4 : 2;
       ctx.stroke();
+
+      if (!sparkline && cursor !== null && closes[index] !== undefined) {
+        const marker = x(index);
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = palette.getPropertyValue("--muted").trim();
+        ctx.lineWidth = 1;
+        ctx.moveTo(marker, margin);
+        ctx.lineTo(marker, height - margin);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(marker, y(closes[index]), 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
     };
 
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [prices, negative, sparkline, money]);
+  }, [prices, negative, sparkline, money, cursor, index]);
 
-  return <canvas ref={ref} className={sparkline ? "market-sparkline" : "block h-full w-full"}
-    role={sparkline ? undefined : "img"} aria-label={label} aria-hidden={sparkline || undefined} />;
+  function inspect(event) {
+    if (!plot.current || !prices?.length) return;
+    const { left, right } = plot.current;
+    const offset = event.clientX - ref.current.getBoundingClientRect().left;
+    const fraction = Math.max(0, Math.min(1, (offset - left) / (right - left)));
+    setCursor(Math.round(fraction * (prices.length - 1)));
+  }
+
+  if (sparkline) return <canvas ref={ref} className="market-sparkline" aria-hidden="true" />;
+
+  return <>
+    <div className="chart-wrap">
+      <canvas ref={ref} className="block h-full w-full" role="img" aria-label={label}
+        onPointerMove={event => { if (event.pointerType === "mouse") inspect(event); }} onClick={inspect} />
+    </div>
+    {prices?.length > 1 && <div className="chart-inspector">
+      <input id={id} type="range" min={0} max={prices.length - 1} value={index}
+        aria-label={t("Inspect closing prices")} aria-valuetext={pointLabel}
+        onChange={event => setCursor(event.target.valueAsNumber)} />
+      <output htmlFor={id} aria-live="off"><time dateTime={point.date}>{dateLabel(point.date)}</time>
+        <strong>{money.format(point.close)}</strong></output>
+    </div>}
+  </>;
 }

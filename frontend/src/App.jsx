@@ -22,11 +22,11 @@ function confirmationNotice() {
   if (expired) return { message: "This confirmation link is invalid or has expired. Sign in to continue or request a new link.", error: true };
 }
 
-function MarketOverview({ api, config, onSelect }) {
+function MarketOverview({ api, config, onSelect, hidden }) {
   const { t, money, dateLabel, signedPercent } = useLanguage();
   const { data, error } = useResource(api, "/api/market-overview");
 
-  return <section className="market-overview" aria-labelledby="market-overview-title">
+  return <section className="market-overview" aria-labelledby="market-overview-title" hidden={hidden}>
     <div className="market-overview-header">
       <h2 id="market-overview-title">{t("Market highlights")}</h2>
       <p>{t(config.marketMode === "demo" ? "Synthetic closes · 20 sessions" : "Daily closes · 20 sessions")}</p>
@@ -178,6 +178,7 @@ export function App() {
   const demo = config.data?.marketMode === "demo";
 
   return <div className="shell">
+    <a className="skip-link" href="#main-content">{t("Skip to content")}</a>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label={t("AI Stock Research home")}>
         <span className="brand-mark" aria-hidden="true"><ChartNoAxesCombined size={18} /></span> AI Stock Research
@@ -194,11 +195,11 @@ export function App() {
         </div>
       </div>}
     </aside>
-    <main className="content">
+    <main className="content" id="main-content" tabIndex={-1}>
       <header className="page-top">
         <div><h1 id="view-title">{t(title)}</h1><p>{t(description)}</p></div>
         <div className="flex flex-wrap items-center justify-start gap-x-2.5 min-[601px]:justify-end gap-y-2">
-          {config.data && <span className="data-state" title={t(demo ? "Sample prices and filings for demonstration"
+          {config.data && <span className="data-state" data-mode={config.data.marketMode} title={t(demo ? "Sample prices and filings for demonstration"
             : "Daily closes from Twelve Data and company filings from SEC EDGAR")}>{t(demo ? "Synthetic demo data" : "Real market data")}</span>}
           <div className="language-switch" role="group" aria-label={t("Language")}>
             {[["en", "English"], ["de", "Deutsch"]].map(([code, label]) => <button key={code} type="button" lang={code}
@@ -207,8 +208,13 @@ export function App() {
         </div>
       </header>
       {config.data && (config.data.marketPreview || active) &&
-        <MarketOverview api={config.data.marketPreview ? request : api} config={config.data} onSelect={active ? selectFeatured : null} />}
-      {config.error && <Notice notice={{ message: config.error.message, error: true }} />}
+        <MarketOverview api={config.data.marketPreview ? request : api} config={config.data}
+          onSelect={active ? selectFeatured : null} hidden={Boolean(active && view !== "research")} />}
+      {config.error && <div className="card workspace-editor">
+        <Notice notice={{ message: config.error.message, error: true }} />
+        <button className="secondary" type="button" onClick={config.reload}>{t("Retry")}</button>
+      </div>}
+      {(config.loading || session.loading) && <p className="empty" role="status">{t("Loading…")}</p>}
       {user && <Notice notice={notice} />}
       {config.data && !session.loading && (active
         ? <Workspace key={session.version} api={api} config={config.data} view={view} openView={openView} selection={selection} />

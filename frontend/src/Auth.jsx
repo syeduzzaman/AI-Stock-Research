@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowRight, ChartNoAxesCombined, Eye, EyeOff, LockKeyhole } from "lucide-react";
 import { request } from "./api.js";
 import { useLanguage } from "./language.jsx";
 import { Notice } from "./ui.jsx";
@@ -19,6 +20,7 @@ export function Auth({ config, onSignIn, initialNotice }) {
   const [email, setEmail] = useState("");
   const [notice, setNotice] = useState(initialNotice);
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const emailInput = useRef(null);
   const codeInput = useRef(null);
   const passwordInput = useRef(null);
@@ -33,6 +35,7 @@ export function Auth({ config, onSignIn, initialNotice }) {
   }, [codeRequired, mode]);
 
   function changeMode(next) {
+    setShowPassword(false);
     setMode(next);
     setNotice(null);
   }
@@ -40,6 +43,7 @@ export function Auth({ config, onSignIn, initialNotice }) {
   async function send(action, fields) {
     setBusy(true);
     setNotice(null);
+    setShowPassword(false);
     try {
       const input = { action, email: email.trim() };
       for (const field of ["username", "password", "code"]) {
@@ -72,7 +76,9 @@ export function Auth({ config, onSignIn, initialNotice }) {
     void send(mode, new FormData(event.currentTarget));
   }
 
+  const Icon = config.hosted ? LockKeyhole : ChartNoAxesCombined;
   return <section className="card sign-in" aria-labelledby="account-title">
+    <span className="account-mark" aria-hidden="true"><Icon size={22} /></span>
     <h2 id="account-title">{t(title)}</h2>
     <p>{t(mode === "demo" && config.marketMode !== "demo" ? "Open a local workspace to research your stocks." : description)}</p>
     <form onSubmit={handleSubmit} noValidate={followLink}>
@@ -88,16 +94,24 @@ export function Auth({ config, onSignIn, initialNotice }) {
       </>}
       {(mode === "login" || newPassword) && <>
         <label htmlFor="password">{t(mode === "reset" ? "New password" : "Password")}</label>
-        <input key={mode} id="password" name="password" type="password" ref={passwordInput}
-          autoComplete={newPassword ? "new-password" : "current-password"} minLength={newPassword ? 12 : 8} maxLength={256} required />
+        <div className="password-field">
+          <input key={mode} id="password" name="password" type={showPassword ? "text" : "password"} ref={passwordInput}
+            autoComplete={newPassword ? "new-password" : "current-password"} minLength={newPassword ? 12 : 8} maxLength={256} required />
+          <button className="password-visibility" type="button" disabled={busy}
+            aria-label={t(showPassword ? "Hide password" : "Show password")} onClick={() => setShowPassword(value => !value)}>
+            {showPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
+          </button>
+        </div>
       </>}
       {codeRequired && <>
         <label htmlFor="email-code">{t("Verification code")}</label>
         <input id="email-code" name="code" ref={codeInput} autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} required />
       </>}
       <Notice notice={notice} />
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <button className="primary" disabled={busy} type="submit">{t(submit)}</button>
+      <div className="account-actions">
+        <button className="primary account-submit" disabled={busy} type="submit" aria-busy={busy}>
+          {t(busy ? "Loading…" : submit)} <ArrowRight size={17} aria-hidden="true" />
+        </button>
         {config.hosted && !followLink && <button className="text-button" type="button" disabled={busy}
           onClick={() => changeMode(mode === "login" ? "signup" : "login")}>
           {t(mode === "login" ? "Create account" : "Back to sign in")}

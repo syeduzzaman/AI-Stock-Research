@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ArrowUpRight, Search } from "lucide-react";
 import { AnalysisResult } from "./AnalysisResult.jsx";
 import { useResource } from "./api.js";
@@ -7,48 +7,76 @@ import { AgentName, horizons, isFilingLink, marketPath, PriceChart, StockActions
 
 function StockSearch({ stocks, onSelect }) {
   const { t } = useLanguage();
+  const listId = useId();
+  const label = t("Search symbol or company");
   const [term, setTerm] = useState("");
   const [universe, setUniverse] = useState("all");
   const [expanded, setExpanded] = useState(false);
-  const firstMatch = useRef(null);
+  const [active, setActive] = useState(-1);
+  const highlighted = useRef(null);
   const needle = term.trim().toLowerCase();
   const matches = stocks.filter(stock => (universe === "all" || stock.indexes.includes(universe)) &&
     (stock.ticker.toLowerCase().includes(needle) || stock.name.toLowerCase().includes(needle)));
+  const optionId = ticker => listId + "-" + ticker;
+
+  useEffect(() => {
+    if (expanded) highlighted.current?.scrollIntoView({ block: "nearest" });
+  }, [active, expanded]);
+
+  function close() {
+    setExpanded(false);
+    setActive(-1);
+  }
 
   function choose(ticker) {
-    setExpanded(false);
+    close();
     setTerm("");
     onSelect(ticker);
   }
 
+  function navigate(event) {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape" && expanded) {
+      event.preventDefault();
+      close();
+    }
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && matches.length) {
+      event.preventDefault();
+      setExpanded(true);
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      setActive(active < 0 ? (step > 0 ? 0 : matches.length - 1)
+        : Math.max(0, Math.min(matches.length - 1, active + step)));
+    }
+    if (event.key === "Enter" && expanded && matches.length) {
+      event.preventDefault();
+      choose(matches[active] ? matches[active].ticker : matches[0].ticker);
+    }
+  }
+
   return <div className="stock-search" onBlur={event => {
-    if (!event.currentTarget.contains(event.relatedTarget)) setExpanded(false);
-  }} onKeyDown={event => {
-    if (event.key === "Escape") setExpanded(false);
+    if (!event.currentTarget.contains(event.relatedTarget)) close();
   }}>
     <label className="search-label">
-      <Search size={19} aria-hidden="true" />
-      <input type="search" placeholder={t("Search symbol or company")} aria-label={t("Search symbol or company")}
-        value={term} autoComplete="off" onFocus={() => setExpanded(true)}
-        onChange={event => { setTerm(event.target.value); setExpanded(true); }}
-        onKeyDown={event => {
-          if (!expanded || !matches.length) return;
-          if (event.key === "Enter") { event.preventDefault(); choose(matches[0].ticker); }
-          if (event.key === "ArrowDown") { event.preventDefault(); firstMatch.current?.focus(); }
-        }} />
+      <Search size={18} aria-hidden="true" />
+      <input type="text" inputMode="search" role="combobox" placeholder={label} aria-label={label}
+        aria-autocomplete="list" aria-expanded={expanded && matches.length > 0} aria-controls={listId}
+        aria-activedescendant={expanded && matches[active] ? optionId(matches[active].ticker) : undefined}
+        value={term} autoComplete="off" onFocus={() => setExpanded(true)} onClick={() => setExpanded(true)}
+        onChange={event => { setTerm(event.target.value); setActive(-1); setExpanded(true); }} onKeyDown={navigate} />
     </label>
     <select value={universe} aria-label={t("Filter covered companies")} onChange={event => {
       setUniverse(event.target.value);
-      setExpanded(true);
+      close();
     }}>
       {[["all", "All covered stocks"], ["nasdaq", "Nasdaq-100 sample"], ["sp500", "S&P 500 sample"]]
-        .map(([key, label]) => <option key={key} value={key}>{t(label)}</option>)}
+        .map(([key, name]) => <option key={key} value={key}>{t(name)}</option>)}
     </select>
-    {expanded && <div className="search-results">
-      {matches.length ? matches.map(({ ticker, name }, index) => <button key={ticker} className="text-left" type="button"
-        ref={index === 0 ? firstMatch : undefined} onClick={() => choose(ticker)}><strong>{ticker}</strong><span>{name}</span></button>)
-        : <p className="empty">{t("No covered stock matched.")}</p>}
-    </div>}
+    <ul id={listId} className="search-results" role="listbox" aria-label={label} hidden={!expanded || !matches.length}>
+      {matches.map(({ ticker, name }, index) => <li key={ticker} id={optionId(ticker)} role="option"
+        aria-selected={index === active} ref={index === active ? highlighted : undefined}
+        onMouseDown={event => event.preventDefault()} onClick={() => choose(ticker)}><strong>{ticker}</strong><span>{name}</span></li>)}
+    </ul>
+    {expanded && !matches.length && <p className="search-results search-empty" role="status">{t("No covered stock matched.")}</p>}
   </div>;
 }
 
@@ -141,8 +169,8 @@ function AnalysisForm({ settings, update, providers, agents, running, onRun, onS
 }
 
 export function Research({ api, stock, config, settings, updateSettings, openStock, actions, history, result, onOpen, onRun, running, onSave }) {
-  const { t, money, signedPercent, dateLabel, calendar } = useLanguage();
-  const { data: market, error } = useResource(api, marketPath(stock.ticker, settings.horizon));
+  const { t, money, signedPercent, dateLabel } = useLanguage();
+  const { data: market, error, reload } = useResource(api, marketPath(stock.ticker, settings.horizon));
   const metrics = market?.metrics;
   const change = metrics && signedPercent.format(metrics.change / 100);
   const providers = config.providers.filter(provider => config.marketMode !== "live" || provider.id !== "demo");
@@ -157,20 +185,16 @@ export function Research({ api, stock, config, settings, updateSettings, openSto
           <StockActions {...actions} />
         </div>
         <div className="quote"><strong>{metrics ? money.format(metrics.last) : "—"}</strong>
-          {metrics && <span className={metrics.change < 0 ? "negative" : undefined}>{change}</span>}</div>
+          {metrics && <span className={metrics.change < 0 ? "negative" : undefined}>{change} <small>· {t(horizons[settings.horizon])}</small></span>}</div>
         <p className="market-date">{metrics
           ? [t(market.marketMode === "demo" ? "Synthetic close" : "Latest available close"), dateLabel(metrics.asOf),
             t("{count} trading sessions", { count: metrics.sessions })].join(" · ")
           : t(error ? "Closing prices are unavailable. Check the market data configuration." : "Loading closing prices…")}</p>
-        <div className="chart-wrap">
-          <PriceChart prices={market?.prices.slice(-metrics.sessions - 1)} negative={metrics?.change < 0}
-            label={metrics ? t("{ticker} closing prices from {from} to {to}, change {change}.", {
-              ticker: stock.ticker, from: dateLabel(metrics.from), to: dateLabel(metrics.asOf), change,
-            }) : t("Closing-price chart for the selected horizon")} />
-        </div>
-        {metrics && <div className="chart-labels" aria-hidden="true">
-          <span>{calendar.format(new Date(metrics.from))}</span><span>{calendar.format(new Date(metrics.asOf))}</span>
-        </div>}
+        {error && <button type="button" className="text-button chart-retry" onClick={reload}>{t("Retry")}</button>}
+        <PriceChart key={stock.ticker + settings.horizon} prices={market?.prices.slice(-metrics.sessions - 1)} negative={metrics?.change < 0}
+          label={metrics ? t("{ticker} closing prices from {from} to {to}, change {change}.", {
+            ticker: stock.ticker, from: dateLabel(metrics.from), to: dateLabel(metrics.asOf), change,
+          }) : t("Closing-price chart for the selected horizon")} />
       </article>
       <AnalysisForm settings={settings} update={updateSettings} providers={providers} agents={config.agents}
         running={running} onRun={onRun} onSave={onSave} />
