@@ -1,30 +1,76 @@
 # AI Stock Research
 
-A bilingual stock research workspace built with **React**, **Tailwind CSS**, and **Python/FastAPI**. Compare independent AI specialists, review cited SEC evidence, and track a personal watchlist and portfolio.
+An **AI-powered, multi-agent stock research application** built with Python, FastAPI, and React. It runs three or five specialist analyses concurrently, retrieves role-specific evidence from SEC filings and market data through the Model Context Protocol (MCP), and shows how each specialist's citations and score contribute to the overall outlook.
 
-- [Frontend](frontend/src) uses React components and hooks for the dashboard, sign-in, watchlist, portfolio, and analysis history. Vite builds the app and Tailwind CSS handles shared layout utilities.
-- [Backend](backend/stock_research) uses FastAPI and Pydantic for the HTTP API, the Python MCP SDK for market evidence, and concurrent specialist calls with score and citation validation.
-- [Workspace migration](supabase/migrations/202611200001_workspace.sql) defines owner-scoped Supabase tables. The demo uses SQLite and synthetic market data.
-
-Use **English** or **Deutsch** at the top of the dashboard to switch languages. The browser remembers your choice. New AI analyses save explanations in both languages in one run. The German view labels older English-only AI explanations and English filing excerpts.
+[Run the demo](#run-with-docker) · [Explore the AI pipeline](#ai-research-pipeline) · [Browse the code](#code-map)
 
 ## Run with Docker
 
-Start Docker Desktop with Linux containers and run this command from the project folder.
+Start Docker Desktop with Linux containers, then run this from the project folder.
 
-~~~powershell
+~~~sh
 docker compose up --build
 ~~~
 
-Open the address shown in the dashboard logs and choose **Open demo**. The default is [http://127.0.0.1:8082](http://127.0.0.1:8082). If port 8082 is in use, add `DASHBOARD_PORT=8083` to `.env` and open [http://127.0.0.1:8083](http://127.0.0.1:8083). To change ports for one PowerShell session, set `$env:DASHBOARD_PORT = '8083'` before running Compose.
+1. Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo uses synthetic market data and rule-based scores and runs without API keys or an `.env` file.
+2. Select **AAPL**, **1M**, and **3 agents**. Run the demo analysis and expand each agent's sources. The bundled example returns **69/100**, with **79** for financial health, **46** for price momentum, and **83** for earnings outlook.
+3. Run it again with the same settings, then open **Compare with previous analysis** to review the overall score, individual specialists, and changes in the cited evidence.
 
-Docker builds the React assets and serves them from FastAPI on the same origin as the API. The runtime uses Python and starts a separate MCP subprocess for research tools. The published port listens on the host's loopback address. Run `docker compose down` to stop the app. The named volume retains your local workspace, including SQLite data created by the previous app.
+If port 8082 is in use, set `DASHBOARD_PORT=8083` in `.env` and open [http://127.0.0.1:8083](http://127.0.0.1:8083). Run `docker compose down` to stop the app. The named volume keeps the local workspace.
 
-The demo works without an `.env` file. Compose reads it at startup when you add one for account settings or live data. Apply configuration edits with `docker compose up -d`.
+## AI research pipeline
+
+```mermaid
+flowchart LR
+    Input["Stock, horizon, and model"] --> API["FastAPI"]
+    API --> Agents["3 or 5 parallel LLM specialists"]
+    Sources["SEC EDGAR and Twelve Data"] --> MCP["Read-only MCP tools"]
+    MCP --> Agents
+    Agents --> Checks["Validate scores and citation IDs"]
+    Checks --> Results["Research result and saved run"]
+```
+
+1. **Retrieve evidence.** The Python backend launches a separate MCP subprocess over stdio. Read-only tools fetch company financials and daily closes, or use lexical search to rank passages from recent SEC filings against the specialist's query. Evidence carries source IDs and dates, with links where available.
+2. **Run the specialists in parallel.** Python's `asyncio.gather` runs each role independently. Each specialist gets its own task and evidence and calls the selected Gemini, OpenAI, or Claude model. The prompt requests an English and a German explanation in the same call and instructs the model to treat source passages as data.
+3. **Validate and score.** The backend checks the structured response for a 0–100 integer score or an unscored result, a usable explanation, and valid citation IDs. A scored response must cite at least one item from that specialist's evidence. Failed or unsupported results stay unscored. The dashboard shows the rounded average of the usable scores, the score range, and how many agents contributed.
+4. **Compare saved runs.** The React dashboard finds the most recent earlier run with the same stock, horizon, provider, model, data mode, scoring version, and specialist roles. It highlights overall and per-agent score changes, newly cited sources, and updated data snapshots using the saved results.
+
+| Specialist | Evidence | Available in |
+| --- | --- | --- |
+| Financial health | SEC company facts covering cash, debt, operating cash flow, and revenue | 3- and 5-agent runs |
+| Price momentum | Daily closing prices and the return over the selected window | 3- and 5-agent runs |
+| Earnings outlook | SEC filing excerpts on guidance, demand, and revenue | 3- and 5-agent runs |
+| Industry dynamics | SEC filing excerpts on competition, capacity, and pricing | 5-agent runs |
+| Downside risk | SEC filing excerpts on concentration, refinancing, and other risks | 5-agent runs |
+
+Scores summarize how the available evidence leans over the selected horizon. Use the cited sources to check the explanations and make your own assessment. The project is for research and education.
+
+## Code map
+
+| Area | Implementation |
+| --- | --- |
+| Multi-agent orchestration | [Python specialist roles, model adapters, JSON validation, and aggregation](backend/stock_research/analysis.py) |
+| Evidence retrieval | [MCP client](backend/stock_research/mcp_client.py), [read-only MCP tools](backend/stock_research/mcp_server.py), and [SEC/Twelve Data retrieval and passage ranking](backend/stock_research/market.py) |
+| API and persistence | [FastAPI routes](backend/stock_research/app.py), [Supabase or SQLite storage](backend/stock_research/storage.py), and [owner-scoped Supabase tables](supabase/migrations/202611200001_workspace.sql) |
+| Research interface | [React, Vite, and Tailwind frontend](frontend), [agent results and evidence](frontend/src/AnalysisResult.jsx), and [saved-run comparison](frontend/src/analysis-comparison.js) |
+
+The workspace also includes an interactive price chart, company headlines and filings, a manual portfolio that estimates value and unrealized gain or loss in USD, and a watchlist that highlights recent filings and daily closing-price moves of at least 3%. Use **English** or **Deutsch** to switch the interface and read available bilingual explanations. The current catalog covers 12 US stocks.
+
+## Enable market data and model APIs
+
+Copy [`.env.example`](.env.example) to `.env` to configure live research. Set `MARKET_DATA_MODE=live`, `TWELVE_DATA_API_KEY`, and `SEC_USER_AGENT` with your app name and contact email for SEC EDGAR. Configure at least one model provider.
+
+| Provider | API key variable | Model variable |
+| --- | --- | --- |
+| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` |
+
+Apply environment edits with `docker compose up -d`. Keep credentials in the server environment. Model inputs are limited to the ticker, horizon, and public research evidence with its metadata. Portfolio holdings and account details stay in the workspace.
 
 ## Run without Docker
 
-Install Node.js 24 and Python 3.13. From the project folder in PowerShell:
+Install Node.js 24 and Python 3.13, then run these commands from the project folder in PowerShell.
 
 ~~~powershell
 npm --prefix frontend ci
@@ -36,16 +82,6 @@ Set-Location backend
 ~~~
 
 Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo needs no external accounts or API keys. FastAPI generates an [OpenAPI specification](http://127.0.0.1:8082/openapi.json) in local mode. To work on React with hot reload, keep Python running on port 8082 and run `npm --prefix frontend run dev` from the project root in a second terminal. Vite proxies API calls to the local Python server.
-
-## Try the workspace
-
-Try searching for **MU**, selecting **3M** and **5 agents**, then running an analysis. Use the chart slider to inspect individual closes and expand an agent’s sources to read the evidence. **Analysis history** saves completed runs and lets you filter by stock. Use **Add to watchlist** from the stock card or result to follow its closing price and reopen the latest analysis. Use **Add holding** to enter shares you own and the average cost per share in USD. The **Portfolio** shows cost basis, market value, and unrealized gain or loss.
-
-Run an analysis again with the same settings and open **Compare with previous analysis** in the result. It compares the nearest earlier matching run in your saved history and highlights score changes, newly cited sources, and updated data snapshots.
-
-**Watchlist updates** shows SEC company reports and moves of at least 3% between daily closes for the stocks you follow over the past 14 days. In live mode, filing updates link to SEC EDGAR. The demo uses sample filings and prices.
-
-Scroll below a stock's research tools for recent company headlines from Twelve Data and filings from SEC EDGAR. The section loads on demand and uses the existing Twelve Data key. Demo mode shows clearly labeled sample announcements.
 
 ## Connect a dedicated Supabase project
 
@@ -76,29 +112,9 @@ Supabase Auth manages credentials. The app stores a hashed session identifier in
 
 The production deployment uses a separate volume from the local demo. The public session cookie uses `Secure`, `HttpOnly`, and a host-only prefix. Sign-out removes the app session before contacting Supabase to revoke it. An app password reset also invalidates the account's existing dashboard sessions.
 
-## Enable market data and model APIs
-
-- Set `MARKET_DATA_MODE=live` and `TWELVE_DATA_API_KEY` in `.env`. Set `SEC_USER_AGENT` to your app name and contact email, for example `"Stock Research Dashboard your-email@example.com"`. Live mode requests daily closing prices from Twelve Data and reads SEC EDGAR company facts and recent filings for the covered US issuers.
-- Set both the API key and model ID for each provider you want to enable. The model selector shows available integrations. Local demo analysis works with synthetic data and no model key. Live analysis requires an enabled model.
-- Keep all provider credentials in the server environment or local .env file. When a configured model runs, it receives the ticker, horizon, and public research evidence used by the agent. Portfolio holdings and account details stay in the workspace.
-
-In this version the catalog is a 12-stock sample, with Nasdaq-100 and S&P 500 filters. The workspace tracks manually entered long positions with an average cost and unrealized value in USD.
-
-## Architecture
-
-- **MCP**. FastAPI starts a Python MCP server over stdio, discovers its read-only tools, and calls them for prices, company financials, SEC filings, and press releases. The app passes market-data settings to the subprocess through an environment allowlist.
-- **Retrieval**. The server extracts passages from recent filings, ranks them against each specialist's query, and sends matching excerpts with source IDs, dates and links to the analysis backend. The first version uses lexical retrieval.
-- **Agents**. Three or five specialists run independently. Each agent receives the evidence for its role and scores the selected horizon on a shared 0–100 scale. The backend validates model output and references and averages the scored agents. The UI shows score coverage and range.
-- **Scoring**. The overall score averages agents with usable results. The interface labels the direction and strength of the evidence on a 0–100 scale. The horizon controls the question sent to each model and the price-change window. Portfolio values use the latest available close shown on each row.
-
-The local demo and end-to-end test do not require external services. The hosted configuration uses these service references:
-
-- [MCP Python SDK](https://py.sdk.modelcontextprotocol.io/)
-- [Supabase password authentication](https://supabase.com/docs/guides/auth/passwords)
-- [Twelve Data API](https://twelvedata.com/docs)
-- [SEC EDGAR Data APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
-
 ## Verify
+
+After [setting up the local runtimes](#run-without-docker), run the frontend checks and Python tests from the project folder.
 
 ~~~powershell
 npm --prefix frontend test
@@ -108,4 +124,4 @@ Push-Location backend
 Pop-Location
 ~~~
 
-The tests cover retrieval, session separation, personal watchlists and holdings, preferences, MCP calls, score aggregation, and reopening analysis history.
+The integration suite runs the real MCP subprocess against synthetic market data. It also tests filing retrieval, bilingual model responses, partial data outages, account isolation, and session security using controlled fixtures. Frontend tests cover matching past analyses and reporting API errors.
