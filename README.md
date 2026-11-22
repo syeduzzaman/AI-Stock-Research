@@ -4,6 +4,10 @@ An **AI-powered, multi-agent stock research application** built with Python, Fas
 
 [Run the demo](#run-with-docker) · [Explore the AI pipeline](#ai-research-pipeline) · [Browse the code](#code-map)
 
+![NVIDIA analysis with an overall outlook, individual specialist scores, explanations, and expandable sources](docs/screenshots/agent-results.png)
+
+*Example Gemini run. Four of five specialists returned usable scores.*
+
 ## Run with Docker
 
 Start Docker Desktop with Linux containers, then run this from the project folder.
@@ -44,6 +48,10 @@ flowchart LR
 | Downside risk | SEC filing excerpts on concentration, refinancing, and other risks | 5-agent runs |
 
 Scores summarize how the available evidence leans over the selected horizon. Use the cited sources to check the explanations and make your own assessment. The project is for research and education.
+
+![Research dashboard with market charts and controls for the time horizon, model, and agent count](docs/screenshots/research-setup.png)
+
+*Research setup with Google Gemini and five specialists selected.*
 
 ## Code map
 
