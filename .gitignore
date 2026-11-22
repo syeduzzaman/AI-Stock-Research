@@ -3,4 +3,8 @@
 !.env.example
 data/
 node_modules/
+frontend/dist/
+.venv/
+__pycache__/
+*.py[cod]
 *.log

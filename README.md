@@ -1,6 +1,10 @@
 # AI Stock Research
 
-A personal stock research workspace with watchlists, manual holdings, configurable multi-agent analysis, and cited filing excerpts.
+A bilingual stock research workspace built with **React**, **Tailwind CSS**, and **Python/FastAPI**. Compare independent AI specialists, review cited SEC evidence, and track a personal watchlist and portfolio.
+
+- [Frontend](frontend/src) uses React components and hooks for the dashboard, sign-in, watchlist, portfolio, and analysis history. Vite builds the app and Tailwind CSS handles shared layout utilities.
+- [Backend](backend/stock_research) uses FastAPI and Pydantic for the HTTP API, the Python MCP SDK for market evidence, and concurrent specialist calls with score and citation validation.
+- [Workspace migration](supabase/migrations/202611200001_workspace.sql) defines owner-scoped Supabase tables. The demo uses SQLite and synthetic market data.
 
 Use **English** or **Deutsch** at the top of the dashboard to switch languages. The browser remembers your choice. New AI analyses save explanations in both languages in one run. The German view labels older English-only AI explanations and English filing excerpts.
 
@@ -14,19 +18,26 @@ docker compose up --build
 
 Open the address shown in the dashboard logs and choose **Open demo**. The default is [http://127.0.0.1:8082](http://127.0.0.1:8082). If port 8082 is in use, add `DASHBOARD_PORT=8083` to `.env` and open [http://127.0.0.1:8083](http://127.0.0.1:8083). To change ports for one PowerShell session, set `$env:DASHBOARD_PORT = '8083'` before running Compose.
 
-Compose runs the dashboard and its MCP subprocess in one container. The health check pings the MCP server, and the published port listens on the host's loopback address. Run `docker compose down` to stop the app. The named volume retains your demo workspace when you replace the container. The container starts with its own SQLite database when you first switch from a direct Node.js launch.
+Docker builds the React assets and serves them from FastAPI on the same origin as the API. The runtime uses Python and starts a separate MCP subprocess for research tools. The published port listens on the host's loopback address. Run `docker compose down` to stop the app. The named volume retains your local workspace, including SQLite data created by the previous app.
 
 The demo works without an `.env` file. Compose reads it at startup when you add one for account settings or live data. Apply configuration edits with `docker compose up -d`.
 
-## Run directly with Node.js
+## Run without Docker
 
-Install Node.js 24 or newer. From the project folder:
+Install Node.js 24 and Python 3.13. From the project folder in PowerShell:
 
 ~~~powershell
-node --env-file-if-exists=.env src/server.mjs
+npm --prefix frontend ci
+npm --prefix frontend run build
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+Set-Location backend
+..\.venv\Scripts\python.exe -m stock_research
 ~~~
 
-Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo needs no accounts, packages, or API keys. It uses synthetic closing prices, financial numbers, and filing excerpts. The same browser session can reopen watchlists, manual positions, analysis preferences, and results stored in local SQLite.
+Open [http://127.0.0.1:8082](http://127.0.0.1:8082) and choose **Open demo**. The demo needs no external accounts or API keys. FastAPI generates an [OpenAPI specification](http://127.0.0.1:8082/openapi.json) in local mode. To work on React with hot reload, keep Python running on port 8082 and run `npm --prefix frontend run dev` from the project root in a second terminal. Vite proxies API calls to the local Python server.
+
+## Try the workspace
 
 Try searching for **MU**, selecting **3M** and **5 agents**, then running an analysis. Expand an agent’s sources to read the evidence. **Analysis history** saves completed runs. Use **Add to watchlist** from the stock card or result to follow its closing price and reopen the latest analysis. Use **Add holding** to enter shares you own and the average cost per share in USD. The **Portfolio** shows cost basis, market value, and unrealized gain or loss.
 
@@ -49,11 +60,11 @@ Supabase Auth manages credentials. The app stores a hashed session identifier in
 
 ## Deploy behind HTTPS
 
-1. Choose the public HTTPS URL and a host that can run one Node container with a persistent volume. The production Compose file publishes the app on the host's loopback interface. Point an HTTPS reverse proxy at that loopback port, preserve the public `Host` header, and redirect HTTP traffic to HTTPS at the proxy.
+1. Choose the public HTTPS URL and a host that can run one Python container with a persistent volume. The production Compose file publishes the app on the host's loopback interface. Point an HTTPS reverse proxy at that loopback port, preserve the public `Host` header, and redirect HTTP traffic to HTTPS at the proxy.
 2. Copy `.env.example` to `.env.production` on the host. Set `PUBLIC_ORIGIN` to the exact HTTPS origin without a trailing slash and use the Supabase publishable key. Generate a deployment-specific `SESSION_ENCRYPTION_KEY` and keep it in the host's secrets so it stays available across restarts.
 
    ~~~sh
-   node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
    ~~~
 
 3. In Supabase, set the Site URL and allowed redirect URLs to the exact production address. Keep email confirmation enabled and connect a verified [SMTP sender](https://supabase.com/docs/guides/auth/auth-smtp). Set the **Reset password** email template to send the numeric code with `{{ .Token }}`, then set `SUPABASE_PASSWORD_RECOVERY=code` in the production environment to enable the in-app form. Use the same approach for **Confirm signup** and set `SUPABASE_EMAIL_CONFIRMATION=code` if using confirmation codes. Set Supabase's password minimum to match the app's 12-character minimum for new passwords and review the project's available [password protections](https://supabase.com/docs/guides/auth/password-security).
@@ -75,14 +86,14 @@ In this version the catalog is a 12-stock sample, with Nasdaq-100 and S&P 500 fi
 
 ## Architecture
 
-- **MCP**. The Node app launches a separate stdio MCP server, initializes protocol version 2025-11-25, discovers tools, and calls the declared read-only tools through JSON-RPC. The server exposes get_price_history, get_company_financials, get_recent_filings, get_press_releases, and search_filings.
+- **MCP**. FastAPI starts a Python MCP server over stdio, discovers its read-only tools, and calls them for prices, company financials, SEC filings, and press releases. The app passes market-data settings to the subprocess through an environment allowlist.
 - **Retrieval**. The server extracts passages from recent filings, ranks them against each specialist's query, and sends matching excerpts with source IDs, dates and links to the analysis backend. The first version uses lexical retrieval.
 - **Agents**. Three or five specialists run independently. Each agent receives the evidence for its role and scores the selected horizon on a shared 0–100 scale. The backend validates model output and references and averages the scored agents. The UI shows score coverage and range.
 - **Scoring**. The overall score averages agents with usable results. The interface labels the direction and strength of the evidence on a 0–100 scale. The horizon controls the question sent to each model and the price-change window. Portfolio values use the latest available close shown on each row.
 
 The local demo and end-to-end test do not require external services. The hosted configuration uses these service references:
 
-- [Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25)
+- [MCP Python SDK](https://py.sdk.modelcontextprotocol.io/)
 - [Supabase password authentication](https://supabase.com/docs/guides/auth/passwords)
 - [Twelve Data API](https://twelvedata.com/docs)
 - [SEC EDGAR Data APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
@@ -90,7 +101,11 @@ The local demo and end-to-end test do not require external services. The hosted 
 ## Verify
 
 ~~~powershell
-node --test
+npm --prefix frontend test
+npm --prefix frontend run build
+Push-Location backend
+..\.venv\Scripts\python.exe -m unittest discover -s tests -v
+Pop-Location
 ~~~
 
 The tests cover retrieval, session separation, personal watchlists and holdings, preferences, MCP calls, score aggregation, and reopening analysis history.
