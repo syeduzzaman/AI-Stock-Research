@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSessionToken, sealSessionToken, sessionEncryptionEnabled } from "./session-security.mjs";
 
 const endpoint = process.env.SUPABASE_URL?.replace(/\/$/, "");
 const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
@@ -12,9 +13,11 @@ if (endpoint && !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(endpoint)) {
 }
 export const hosted = Boolean(endpoint && publishableKey);
 export const confirmationMode = process.env.SUPABASE_EMAIL_CONFIRMATION === "code" ? "code" : "link";
+export const passwordRecovery = hosted && process.env.SUPABASE_PASSWORD_RECOVERY === "code";
 const defaults = { provider: "demo", horizon: "1m", agentCount: 5 };
 const sessionLife = 60 * 60 * 24 * 7;
 const hash = value => createHash("sha256").update(value).digest("hex");
+const sessionPattern = /^[A-Za-z0-9_-]{43}$/;
 const usernamePattern = /^[a-zA-Z0-9_]{3,24}$/;
 const confirmationMessage = confirmationMode === "code" ? "Check your email for the verification code."
   : "Check your email for the confirmation link.";
@@ -27,14 +30,24 @@ export class HttpError extends Error {
   }
 }
 
-async function supabase(path, { method = "GET", token, payload, prefer, redirectTo } = {}) {
+export function checkPublicAuthKey() {
+  if (/^sb_publishable_[A-Za-z0-9_-]+$/.test(publishableKey ?? "")) return;
+  try {
+    const [, claims] = publishableKey.split(".");
+    if (JSON.parse(Buffer.from(claims, "base64url")).role === "anon") return;
+  } catch { /* Report configuration errors without printing the key. */ }
+  throw new Error("Use a Supabase publishable key or legacy anon key in production.");
+}
+
+async function supabase(path, { method = "GET", token, payload, prefer, redirectTo, timeout = 12_000 } = {}) {
   const headers = { apikey: publishableKey, "Content-Type": "application/json" };
   if (token) headers.Authorization = "Bearer " + token;
   if (prefer) headers.Prefer = prefer;
   const url = new URL(path, endpoint);
   if (redirectTo) url.searchParams.set("redirect_to", redirectTo);
   const response = await fetch(url, {
-    method, headers, body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(12_000)
+    method, headers, body: payload === undefined ? undefined : JSON.stringify(payload),
+    redirect: "error", signal: AbortSignal.timeout(timeout)
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
@@ -51,7 +64,7 @@ async function supabase(path, { method = "GET", token, payload, prefer, redirect
 }
 
 export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPath(new URL("../data/workspace.sqlite", import.meta.url))) {
-  if (dbFile !== ":memory:") mkdirSync(dirname(dbFile), { recursive: true });
+  if (dbFile !== ":memory:") mkdirSync(dirname(dbFile), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(dbFile);
   db.exec(
     "PRAGMA journal_mode = WAL;" +
@@ -67,14 +80,24 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
   if (!db.prepare("PRAGMA table_info(sessions)").all().some(column => column.name === "username")) {
     db.exec("ALTER TABLE sessions ADD COLUMN username TEXT");
   }
+  if (sessionEncryptionEnabled) {
+    const plaintext = db.prepare("SELECT id, access, refresh FROM sessions WHERE access IS NOT NULL AND substr(access, 1, 3) <> 'v1.'").all();
+    const update = db.prepare("UPDATE sessions SET access = ?, refresh = ? WHERE id = ?");
+    for (const row of plaintext) {
+      update.run(sealSessionToken(row.access, row.id, "access"), sealSessionToken(row.refresh, row.id, "refresh"), row.id);
+    }
+  }
   const refreshing = new Map();
+  const activeSession = db.prepare("SELECT * FROM sessions WHERE id = ? AND expires > ?");
 
   function saveSession(account, auth) {
     const session = randomBytes(32).toString("base64url");
+    const id = hash(session);
     const username = account.user_metadata?.username;
     db.prepare("DELETE FROM sessions WHERE expires <= ?").run(Date.now());
     db.prepare("INSERT INTO sessions (id, user_id, email, access, refresh, expires, access_expires, username) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(hash(session), account.id, account.email ?? null, auth?.access_token ?? null, auth?.refresh_token ?? null,
+      .run(id, account.id, account.email ?? null,
+        sealSessionToken(auth?.access_token ?? null, id, "access"), sealSessionToken(auth?.refresh_token ?? null, id, "refresh"),
         Date.now() + sessionLife * 1000, auth ? Date.now() + auth.expires_in * 1000 : null,
         typeof username === "string" && usernamePattern.test(username) ? username : null);
     return session;
@@ -85,19 +108,40 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
       if (action !== "demo") throw new HttpError(400, "Use the local demo workspace.");
       return { session: saveSession({ id: randomUUID() }), message: null };
     }
-    if (!["login", "signup", "verify", "resend"].includes(action)) throw new HttpError(400, "Unknown account action.");
+    const actions = passwordRecovery ? ["login", "signup", "verify", "resend", "recover", "reset"] : ["login", "signup", "verify", "resend"];
+    if (!actions.includes(action)) throw new HttpError(400, "Unknown account action.");
     email = typeof email === "string" ? email.trim() : "";
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new HttpError(400, "Enter a valid email address.");
+    }
+    if (action === "recover") {
+      try {
+        await supabase("/auth/v1/recover", { method: "POST", payload: { email }, redirectTo: confirmationUrl });
+      } catch (error) {
+        if (error.code !== "user_not_found") throw error;
+      }
+      return { recoveryRequested: true };
+    }
+    if (action === "reset") {
+      validateNewPassword(password);
+      validateCode(code);
+      const auth = await supabase("/auth/v1/verify", {
+        method: "POST", payload: { email, token: code.trim(), type: "recovery" }
+      });
+      if (!auth?.access_token || !auth.user?.id || auth.user.email?.toLowerCase() !== email.toLowerCase()) {
+        throw new HttpError(403, "This reset code could not be verified.");
+      }
+      await supabase("/auth/v1/user", { method: "PUT", token: auth.access_token, payload: { password } });
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(auth.user.id);
+      await revoke(auth.access_token, "global");
+      return { passwordReset: true };
     }
     if (action === "resend") {
       await supabase("/auth/v1/resend", { method: "POST", payload: { email, type: "signup" }, redirectTo: confirmationUrl });
       return { session: null, verificationRequired: true, message: confirmationMessage };
     }
     if (action === "verify") {
-      if (typeof code !== "string" || !/^\d{6,10}$/.test(code.trim())) {
-        throw new HttpError(400, "Enter the numeric code from your confirmation email.");
-      }
+      validateCode(code);
       const result = await supabase("/auth/v1/verify", { method: "POST", payload: { email, token: code.trim(), type: "signup" } });
       return verifiedSession(result);
     }
@@ -105,6 +149,7 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
       throw new HttpError(400, "Enter a password with at least 8 characters.");
     }
     if (action === "signup") {
+      validateNewPassword(password);
       if (typeof username !== "string" || !usernamePattern.test(username.trim())) {
         throw new HttpError(400, "Use 3–24 letters, numbers, or underscores for your username.");
       }
@@ -123,28 +168,45 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
     }
   }
 
+  function validateNewPassword(password) {
+    if (typeof password !== "string" || [...password].length < 12 || Buffer.byteLength(password) > 72) {
+      throw new HttpError(400, "Use at least 12 characters and at most 72 bytes for your new password.");
+    }
+  }
+
+  function validateCode(code) {
+    if (typeof code !== "string" || !/^\d{6,10}$/.test(code.trim())) {
+      throw new HttpError(400, "Enter the numeric code from your email.");
+    }
+  }
+
   function verifiedSession(result) {
     if (!result?.access_token || !result.refresh_token || !result.user?.id || !result.user.email_confirmed_at) {
       throw new HttpError(403, "Confirm your email before signing in.");
     }
+    if (!Number.isFinite(result.expires_in) || result.expires_in <= 0) throw new HttpError(502, "Authentication returned an invalid session.");
     return { session: saveSession(result.user, result), message: null };
   }
 
   async function account(session) {
-    if (!session || !/^[\w-]{43}$/.test(session)) return null;
+    if (!sessionPattern.test(session ?? "")) return null;
     const id = hash(session);
-    const row = db.prepare("SELECT * FROM sessions WHERE id = ? AND expires > ?").get(id, Date.now());
+    const row = activeSession.get(id, Date.now());
     if (!row || Boolean(row.access) !== hosted) return null;
+    let token = readSessionToken(row.access, id, "access");
     if (row.refresh && row.access_expires <= Date.now() + 15_000) {
       if (!refreshing.has(id)) refreshing.set(id, (async () => {
         try {
           const next = await supabase("/auth/v1/token?grant_type=refresh_token", {
-            method: "POST", payload: { refresh_token: row.refresh }
+            method: "POST", payload: { refresh_token: readSessionToken(row.refresh, id, "refresh") }
           });
-          const replacement = { access: next.access_token, refresh: next.refresh_token, access_expires: Date.now() + next.expires_in * 1000 };
+          if (!next?.access_token || !next.refresh_token || !Number.isFinite(next.expires_in) || next.expires_in <= 0) {
+            throw new HttpError(502, "Authentication returned an invalid session.");
+          }
           db.prepare("UPDATE sessions SET access = ?, refresh = ?, access_expires = ? WHERE id = ?")
-            .run(replacement.access, replacement.refresh, replacement.access_expires, id);
-          return replacement.access;
+            .run(sealSessionToken(next.access_token, id, "access"), sealSessionToken(next.refresh_token, id, "refresh"),
+              Date.now() + next.expires_in * 1000, id);
+          return next.access_token;
         } catch (error) {
           if (![400, 401, 403].includes(error.status)) throw error;
           db.prepare("DELETE FROM sessions WHERE id = ?").run(id);
@@ -153,17 +215,37 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
           refreshing.delete(id);
         }
       })());
-      row.access = await refreshing.get(id);
-      if (!row.access) return null;
+      token = await refreshing.get(id);
+      if (!token || !activeSession.get(id, Date.now())) return null;
     }
-    return { id: row.user_id, email: row.email, username: row.username, token: row.access };
+    return { id: row.user_id, email: row.email, username: row.username, token };
   }
 
-  async function signOut(session, user) {
-    if (session) db.prepare("DELETE FROM sessions WHERE id = ?").run(hash(session));
-    if (user?.token) {
-      try { await supabase("/auth/v1/logout?scope=local", { method: "POST", token: user.token }); }
-      catch (error) { if (![401, 403].includes(error.status)) throw error; }
+  async function revoke(token, scope) {
+    if (!token) return;
+    try { await supabase("/auth/v1/logout?scope=" + scope, { method: "POST", token, timeout: 4000 }); }
+    catch (error) {
+      if (![400, 401, 403].includes(error.status)) console.warn("Supabase session revocation could not be confirmed.");
+    }
+  }
+
+  async function signOut(session) {
+    if (!sessionPattern.test(session ?? "")) return;
+    const id = hash(session);
+    const row = db.prepare("DELETE FROM sessions WHERE id = ? RETURNING access, refresh, access_expires").get(id);
+    if (!row?.access) return;
+    try {
+      const pending = refreshing.get(id);
+      let token = pending ? await pending : readSessionToken(row.access, id, "access");
+      if (!pending && row.refresh && row.access_expires <= Date.now()) {
+        const result = await supabase("/auth/v1/token?grant_type=refresh_token", {
+          method: "POST", timeout: 4000, payload: { refresh_token: readSessionToken(row.refresh, id, "refresh") }
+        });
+        token = result?.access_token;
+      }
+      await revoke(token, "local");
+    } catch (error) {
+      if (![400, 401, 403].includes(error.status)) console.warn("Supabase session revocation could not be confirmed.");
     }
   }
 
@@ -246,11 +328,14 @@ export function createAccounts(dbFile = process.env.WORKSPACE_DB ?? fileURLToPat
   return { signIn, signOut, account, watchlist, setWatch, portfolio, setHolding, history, saveRun, preferences, savePreferences, rateLimit, close: () => db.close() };
 }
 
-export function readSession(request) {
-  return request.headers.cookie?.split(";").map(part => part.trim()).find(part => part.startsWith("sr_session="))?.slice(11);
+export function readSession(request, secure = false) {
+  const prefix = (secure ? "__Host-sr_session" : "sr_session") + "=";
+  const matches = request.headers.cookie?.split(";").map(part => part.trim()).filter(part => part.startsWith(prefix));
+  const value = matches?.length === 1 ? matches[0].slice(prefix.length) : undefined;
+  return sessionPattern.test(value ?? "") ? value : undefined;
 }
 
 export function sessionCookie(value, secure) {
-  return "sr_session=" + (value ?? "") + "; Path=/; HttpOnly; SameSite=Lax; Max-Age="
+  return (secure ? "__Host-sr_session=" : "sr_session=") + (value ?? "") + "; Path=/; HttpOnly; SameSite=Lax; Max-Age="
     + (value ? sessionLife : 0) + (secure ? "; Secure" : "");
 }

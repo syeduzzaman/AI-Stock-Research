@@ -1,0 +1,25 @@
+services:
+  dashboard:
+    build: .
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env.production
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8082"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the public HTTPS origin}"
+      LOCAL_CONTAINER_ORIGIN: ""
+      WORKSPACE_DB: /app/data/workspace.sqlite
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8082}:8082"
+    volumes:
+      - production-workspace-data:/app/data
+
+volumes:
+  production-workspace-data:

@@ -2,9 +2,16 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
+const toolEnvironment = new Set([
+  "MARKET_DATA_MODE", "TWELVE_DATA_API_KEY", "SEC_USER_AGENT",
+  "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP"
+]);
+
 export function connectMcp() {
   const location = fileURLToPath(new URL("./mcp-server.mjs", import.meta.url));
-  const child = spawn(process.execPath, [location], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => toolEnvironment.has(name.toUpperCase())));
+  const child = spawn(process.execPath, [location], { env, stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   const pending = new Map();
   let id = 0;

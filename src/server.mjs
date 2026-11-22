@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { analyze, horizons, listProviders, marketSnapshot, roles } from "./analysis.mjs";
-import { confirmationMode, createAccounts, hosted, HttpError, readSession, sessionCookie } from "./accounts.mjs";
+import { checkPublicAuthKey, confirmationMode, createAccounts, hosted, HttpError, passwordRecovery, readSession, sessionCookie } from "./accounts.mjs";
 import { companyNews } from "./company-news.mjs";
 import { connectMcp } from "./mcp-client.mjs";
 import { findStock, mode, publicStock, stocks } from "./market.mjs";
+import { sessionEncryptionEnabled } from "./session-security.mjs";
 import { watchlistUpdates } from "./watchlist-updates.mjs";
 
 const host = process.env.HOST || "127.0.0.1";
@@ -26,6 +28,11 @@ if (!publicOrigin && !containerHost && !["localhost", "127.0.0.1", "::1"].includ
   throw new Error("Set PUBLIC_ORIGIN and use HTTPS when exposing the app beyond localhost.");
 }
 if (publicOrigin && !hosted) throw new Error("Configure Supabase Auth before exposing the app publicly.");
+const publicHost = publicOrigin ? new URL(publicOrigin).host : null;
+if (publicOrigin) {
+  checkPublicAuthKey();
+  if (!sessionEncryptionEnabled) throw new Error("Configure SESSION_ENCRYPTION_KEY before exposing the app publicly.");
+}
 if ((publicOrigin || hosted) && mode === "live" && (!process.env.SEC_USER_AGENT || !process.env.TWELVE_DATA_API_KEY)) {
   throw new Error("Configure Twelve Data and SEC EDGAR for live mode.");
 }
@@ -68,7 +75,10 @@ function verifyOrigin(request) {
   const origin = request.headers.origin;
   const protocol = publicOrigin ? "https://" : "http://";
   const own = publicOrigin ?? protocol + request.headers.host;
-  if (request.headers["sec-fetch-site"] === "cross-site" || (origin && origin !== own)) throw new HttpError(403, "This request must come from your dashboard.");
+  const requireOrigin = publicOrigin && request.method !== "GET";
+  if (request.headers["sec-fetch-site"] === "cross-site" || ((origin || requireOrigin) && origin !== own)) {
+    throw new HttpError(403, "This request must come from your dashboard.");
+  }
 }
 
 function options(input) {
@@ -84,9 +94,13 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
   const activeRuns = new Set();
   const handle = async (request, response) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     response.setHeader("Referrer-Policy", "no-referrer");
-    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
+      if (publicHost && request.headers.host !== publicHost) throw new HttpError(403, "Open the configured HTTPS address to use the dashboard.");
+      if (publicHost) response.setHeader("Strict-Transport-Security", "max-age=31536000");
       if (localHost && request.headers.host !== localHost) {
         throw new HttpError(403, "Open the configured loopback address to use the dashboard.");
       }
@@ -101,7 +115,7 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
       }
       if (method === "GET" && path === "/api/config") {
         json(response, 200, {
-          hosted, confirmationMode, marketMode: mode, marketPreview: !publicOrigin, featuredStocks,
+          hosted, confirmationMode, passwordRecovery, marketMode: mode, marketPreview: !publicOrigin, featuredStocks,
           providers: providerOptions,
           agents: roles.map(({ id, name, initials }) => ({ id, name, initials })), stocks: stocks.map(publicStock)
         });
@@ -117,15 +131,33 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
         return;
       }
       if (method !== "GET") verifyOrigin(request);
-      const session = readSession(request);
+      const session = readSession(request, Boolean(publicOrigin));
+      if (method === "POST" && path === "/api/logout") {
+        await accounts.signOut(session);
+        response.setHeader("Set-Cookie", sessionCookie(null, Boolean(publicOrigin)));
+        json(response, 200, { success: true });
+        return;
+      }
       if (method === "POST" && path === "/api/account") {
-        accounts.rateLimit("login:" + request.socket.remoteAddress, 20, 300_000);
+        accounts.rateLimit("login:" + request.socket.remoteAddress, publicOrigin ? 120 : 20, 300_000);
         const input = await body(request);
+        if (hosted && typeof input.email === "string" && input.email.length <= 254) {
+          const email = input.email.trim().toLowerCase();
+          if (email) accounts.rateLimit("account:" + createHash("sha256").update(email).digest("hex"), 8, 300_000);
+        }
         const directHost = host === "::1" ? "[::1]" : host;
         const origin = publicOrigin ?? containerOrigin ?? "http://" + directHost + ":" + (request.socket.localPort ?? port);
         const result = await accounts.signIn(input.action, input, new URL("/", origin).href);
-        if (result.session) response.setHeader("Set-Cookie", sessionCookie(result.session, Boolean(publicOrigin)));
-        json(response, 200, { signedIn: Boolean(result.session), verificationRequired: Boolean(result.verificationRequired), message: result.message });
+        if (result.session) {
+          await accounts.signOut(session);
+          response.setHeader("Set-Cookie", sessionCookie(result.session, Boolean(publicOrigin)));
+        }
+        json(response, 200, {
+          signedIn: Boolean(result.session), verificationRequired: Boolean(result.verificationRequired),
+          ...(result.recoveryRequested && { recoveryRequested: true }),
+          ...(result.passwordReset && { passwordReset: true }),
+          message: result.message
+        });
         return;
       }
       const user = await accounts.account(session);
@@ -141,12 +173,6 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
       }
       if (method === "GET" && path === "/api/session") {
         json(response, 200, { user: user ? { email: user.email, username: user.username, demo: !hosted } : null });
-        return;
-      }
-      if (method === "POST" && path === "/api/logout") {
-        response.setHeader("Set-Cookie", sessionCookie(null, Boolean(publicOrigin)));
-        await accounts.signOut(session, user);
-        json(response, 200, { success: true });
         return;
       }
       if (!path.startsWith("/api/")) throw new HttpError(404, "Page not found.");
@@ -230,7 +256,7 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
       throw new HttpError(404, "Endpoint not found.");
     } catch (error) {
       const status = error.status ?? 500;
-      if (status >= 500) console.error("Request failed:", error.message);
+      if (status >= 500) console.error("Dashboard request failed.", { status, error: error.name });
       json(response, status, { error: status >= 500 ? "The workspace could not complete this request." : error.message });
     }
   };
@@ -239,7 +265,7 @@ export function createDashboard({ accounts = createAccounts(), mcp = connectMcp(
 
 if (import.meta.main) {
   const dashboard = createDashboard();
-  const server = createServer(dashboard.handle);
+  const server = createServer({ headersTimeout: 10_000, requestTimeout: 30_000 }, dashboard.handle);
   server.listen(port, host, () => {
     const address = containerOrigin ?? "http://" + host + ":" + server.address().port;
     console.log("Stock Research Dashboard listening on " + address);

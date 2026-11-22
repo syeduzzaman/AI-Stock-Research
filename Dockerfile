@@ -12,6 +12,6 @@ USER node
 EXPOSE 8082
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch(process.env.LOCAL_CONTAINER_ORIGIN + '/healthz', { signal: AbortSignal.timeout(4000) }).then(response => { process.exitCode = response.ok ? 0 : 1; }).catch(() => { process.exitCode = 1; });"]
+  CMD ["node", "-e", "const origin = new URL(process.env.PUBLIC_ORIGIN || process.env.LOCAL_CONTAINER_ORIGIN); const req = require('node:http').get({ hostname: '127.0.0.1', port: process.env.PORT, path: '/healthz', headers: { host: origin.host }, signal: AbortSignal.timeout(4000) }, res => { res.resume(); process.exitCode = res.statusCode === 200 ? 0 : 1; }); req.on('error', () => { process.exitCode = 1; });"]
 
 CMD ["node", "src/server.mjs"]

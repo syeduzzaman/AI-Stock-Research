@@ -52,7 +52,7 @@
             </div>
             <label for="email" data-i18n>Email</label><input id="email" type="email" autocomplete="email" maxlength="254">
             <div id="password-field">
-              <label for="password" data-i18n>Password</label><input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="256">
+              <label for="password" id="password-label">Password</label><input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="256">
             </div>
             <div id="code-field" hidden>
               <label for="email-code" data-i18n>Verification code</label><input id="email-code" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10">
@@ -61,6 +61,7 @@
           <p class="notice" id="auth-notice" role="status" hidden></p>
           <button class="primary" type="submit" id="sign-in">Open demo</button>
           <button class="text-button" type="button" id="auth-switch" hidden>Create account</button>
+          <button class="text-button" type="button" id="auth-reset" hidden data-i18n>Forgot password?</button>
           <button class="text-button" type="button" id="resend-confirmation" hidden data-i18n>Resend email</button>
         </form>
       </section>

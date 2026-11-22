@@ -64,6 +64,7 @@ let holdingPending = false;
 const closingQuotes = new Map();
 const newsByStock = new Map();
 let newsInView = false;
+const sessionChannel = typeof BroadcastChannel === "function" ? new BroadcastChannel("stock-research-session") : null;
 
 function el(tag, text, className) {
   const item = document.createElement(tag);
@@ -73,10 +74,15 @@ function el(tag, text, className) {
 }
 
 async function api(path, method = "GET", body) {
+  const version = signedInVersion;
   const response = await fetch(path, {
     method, headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
+  if (response.status === 401 && user && signedInVersion === version && path !== "/api/account") {
+    authAction = "login";
+    void showAccount(null);
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "The request could not be completed.");
   return data;
@@ -275,27 +281,37 @@ function authControls() {
   const signup = hosted && authAction === "signup";
   const verify = hosted && authAction === "verify";
   const login = hosted && authAction === "login";
+  const recover = hosted && authAction === "recover";
+  const reset = hosted && authAction === "reset";
   const enterCode = verify && config.confirmationMode === "code";
   const followLink = verify && !enterCode;
-  $("account-title").textContent = t(signup ? "Create your account" : verify ? "Check your email" : login ? "Sign in" : "Open the demo workspace");
-  $("account-intro").textContent = t(enterCode ? "Enter the verification code from your email."
+  const newPassword = signup || reset;
+  $("account-title").textContent = t(recover ? "Reset your password" : reset ? "Choose a new password"
+    : signup ? "Create your account" : verify ? "Check your email" : login ? "Sign in" : "Open the demo workspace");
+  $("account-intro").textContent = t(recover ? "Enter the email address you use to sign in."
+    : reset ? "Enter the reset code from your email and a new password with at least 12 characters."
+    : enterCode ? "Enter the verification code from your email."
     : followLink ? "Open the email from Supabase Auth and select Confirm your email. Then sign in to AI Stock Research."
     : hosted ? "Your watchlist, holdings, and analyses are saved to your account."
       : marketMode === "demo" ? "Try the research flow with synthetic prices and sample filing excerpts." : "Open a local workspace to research your stocks.");
   $("auth-fields").hidden = !hosted;
   $("username-field").hidden = !signup;
-  $("password-field").hidden = !hosted || verify;
-  $("code-field").hidden = !enterCode;
+  $("password-field").hidden = !(login || newPassword);
+  $("code-field").hidden = !(enterCode || reset);
   $("auth-switch").hidden = !hosted || followLink;
-  $("resend-confirmation").hidden = !verify;
-  const activeFields = { username: signup, email: hosted, password: hosted && !verify, "email-code": enterCode };
+  $("auth-reset").hidden = !config.passwordRecovery || !login;
+  $("resend-confirmation").hidden = !verify && !reset;
+  const activeFields = { username: signup, email: hosted, password: login || newPassword, "email-code": enterCode || reset };
   for (const [id, active] of Object.entries(activeFields)) {
     $(id).disabled = !active;
     $(id).required = active;
   }
   $("email").autocomplete = login ? "username" : "email";
-  $("password").autocomplete = signup ? "new-password" : "current-password";
-  $("sign-in").textContent = t(signup ? "Create account" : enterCode ? "Verify code" : followLink ? "Back to sign in" : login ? "Sign in" : "Open demo");
+  $("password").autocomplete = newPassword ? "new-password" : "current-password";
+  $("password").minLength = newPassword ? 12 : 8;
+  $("password-label").textContent = t(reset ? "New password" : "Password");
+  $("sign-in").textContent = t(recover ? "Send reset code" : reset ? "Save new password"
+    : signup ? "Create account" : enterCode ? "Verify code" : followLink ? "Back to sign in" : login ? "Sign in" : "Open demo");
   $("sign-in").formNoValidate = followLink;
   $("auth-switch").textContent = t(login ? "Create account" : "Back to sign in");
 }
@@ -303,6 +319,9 @@ function authControls() {
 async function showAccount(account) {
   const version = ++signedInVersion;
   marketRequest += 1;
+  stock = null;
+  market = null;
+  marketStatus = null;
   closingQuotes.clear();
   newsByStock.clear();
   $("company-news").hidden = true;
@@ -323,9 +342,17 @@ async function showAccount(account) {
     holdings = [];
     history = [];
     $("agent-results").replaceChildren();
+    $("comparison-content").replaceChildren();
+    $("company-news-items").replaceChildren();
     $("history-items").replaceChildren();
     $("watch-items").replaceChildren();
     $("holding-items").replaceChildren();
+    $("watch-updates-list").replaceChildren();
+    $("portfolio-totals").replaceChildren();
+    $("stock-search").value = "";
+    $("search-results").hidden = true;
+    $("password").value = "";
+    $("email-code").value = "";
     prepareHolding();
     renderViewTitle("research");
     authControls();
@@ -1200,6 +1227,13 @@ $("auth-switch").addEventListener("click", () => {
   notice();
   authControls();
 });
+$("auth-reset").addEventListener("click", () => {
+  authAction = "recover";
+  $("password").value = "";
+  notice();
+  authControls();
+  $("email").focus();
+});
 $("auth-form").addEventListener("submit", async event => {
   event.preventDefault();
   if (authAction === "verify" && config.confirmationMode !== "code") {
@@ -1211,24 +1245,35 @@ $("auth-form").addEventListener("submit", async event => {
   await submitAccount(config.hosted ? authAction : "demo");
 });
 $("resend-confirmation").addEventListener("click", async () => {
-  if ($("email").reportValidity()) await submitAccount("resend");
+  if ($("email").reportValidity()) await submitAccount(authAction === "reset" ? "recover" : "resend");
 });
 
 async function submitAccount(action) {
-  const buttons = ["sign-in", "auth-switch", "resend-confirmation"].map($);
+  const buttons = ["sign-in", "auth-switch", "auth-reset", "resend-confirmation"].map($);
   for (const button of buttons) button.disabled = true;
   notice();
   try {
     const input = { action, email: $("email").value.trim() };
     if (action === "signup") input.username = $("username").value;
-    if (action === "signup" || action === "login") input.password = $("password").value;
-    if (action === "verify") input.code = $("email-code").value;
+    if (["signup", "login", "reset"].includes(action)) input.password = $("password").value;
+    if (action === "verify" || action === "reset") input.code = $("email-code").value;
     const result = await api("/api/account", "POST", input);
     $("password").value = "";
     $("email-code").value = "";
     if (result.signedIn) {
       authAction = "login";
+      sessionChannel?.postMessage("signed-in");
       await showAccount((await api("/api/session")).user);
+    } else if (result.recoveryRequested) {
+      authAction = "reset";
+      authControls();
+      accountNotice("If an account exists for that email, a reset code has been sent.");
+      $("email-code").focus();
+    } else if (result.passwordReset) {
+      authAction = "login";
+      authControls();
+      accountNotice("Password updated. Sign in with your new password.");
+      $("password").focus();
     } else if (result.verificationRequired) {
       authAction = "verify";
       authControls();
@@ -1242,11 +1287,32 @@ async function submitAccount(action) {
   }
 }
 $("logout").addEventListener("click", async () => {
+  const button = $("logout");
+  button.disabled = true;
+  $("workspace").hidden = true;
+  signedInVersion += 1;
   try {
     await api("/api/logout", "POST");
+    authAction = "login";
     notice();
     await showAccount(null);
-  } catch (error) { notice(error.message, true); }
+    sessionChannel?.postMessage("signed-out");
+  } catch {
+    notice("Sign-out could not be confirmed. Try signing out again.", true);
+  } finally {
+    button.disabled = false;
+  }
+});
+sessionChannel?.addEventListener("message", ({ data }) => {
+  if (data === "signed-in") location.reload();
+  if (data === "signed-out" && config) {
+    authAction = "login";
+    notice();
+    void showAccount(null);
+  }
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted) location.reload();
 });
 document.querySelectorAll("[data-view]").forEach(item => item.addEventListener("click", () => openView(item.dataset.view)));
 $("stock-search").addEventListener("input", renderSearch);

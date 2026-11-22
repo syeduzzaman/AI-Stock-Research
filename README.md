@@ -45,7 +45,25 @@ Scroll below a stock's research tools for recent company headlines from Twelve D
 
 Supabase's default email delivery is for testing with project team members. To send confirmation emails to other addresses, connect a [custom SMTP sender](https://supabase.com/docs/guides/auth/auth-smtp). For numeric codes, include `{{ .Token }}` in the **Confirm signup** [email template](https://supabase.com/docs/guides/auth/auth-email-templates) and set `SUPABASE_EMAIL_CONFIRMATION=code`. New free projects need custom SMTP to edit this template.
 
-Supabase Auth manages credentials. The app stores a hashed opaque session identifier and server-side tokens in SQLite. In hosted mode, Supabase stores watchlists, holdings, preferences and run history, and uses the signed-in user's token and PostgreSQL row-level security to check ownership. Deploy behind HTTPS with PUBLIC_ORIGIN set and keep the SQLite directory private and persistent. The backend is designed for one process. The first release includes sign-up and sign-in. Add an in-app password recovery flow before opening registration publicly.
+Supabase Auth manages credentials. The app stores a hashed session identifier in SQLite. In hosted mode, Supabase stores watchlists, holdings, preferences and run history and enforces ownership with PostgreSQL row-level security. The dashboard encrypts server-side access and refresh tokens when `SESSION_ENCRYPTION_KEY` is configured. Public mode requires that key.
+
+## Deploy behind HTTPS
+
+1. Choose the public HTTPS URL and a host that can run one Node container with a persistent volume. The production Compose file publishes the app on the host's loopback interface. Point an HTTPS reverse proxy at that loopback port, preserve the public `Host` header, and redirect HTTP traffic to HTTPS at the proxy.
+2. Copy `.env.example` to `.env.production` on the host. Set `PUBLIC_ORIGIN` to the exact HTTPS origin without a trailing slash and use the Supabase publishable key. Generate a deployment-specific `SESSION_ENCRYPTION_KEY` and keep it in the host's secrets so it stays available across restarts.
+
+   ~~~sh
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+   ~~~
+
+3. In Supabase, set the Site URL and allowed redirect URLs to the exact production address. Keep email confirmation enabled and connect a verified [SMTP sender](https://supabase.com/docs/guides/auth/auth-smtp). Set the **Reset password** email template to send the numeric code with `{{ .Token }}`, then set `SUPABASE_PASSWORD_RECOVERY=code` in the production environment to enable the in-app form. Use the same approach for **Confirm signup** and set `SUPABASE_EMAIL_CONFIRMATION=code` if using confirmation codes. Set Supabase's password minimum to match the app's 12-character minimum for new passwords and review the project's available [password protections](https://supabase.com/docs/guides/auth/password-security).
+4. Run the production Compose file and verify the app through its HTTPS URL. Test signup with an email outside the Supabase team, password recovery, and sign-out with a second tab open. Add rate limiting at the HTTPS proxy if running public registration. Confirm your [Twelve Data terms](https://support.twelvedata.com/en/articles/5332349-commercial-and-personal-usage) cover the data you plan to display, including company press releases.
+
+   ~~~sh
+   docker compose --env-file .env.production -f compose.production.yaml up --build -d --wait
+   ~~~
+
+The production deployment uses a separate volume from the local demo. The public session cookie uses `Secure`, `HttpOnly`, and a host-only prefix. Sign-out removes the app session before contacting Supabase to revoke it. An app password reset also invalidates the account's existing dashboard sessions.
 
 ## Enable market data and model APIs
 
